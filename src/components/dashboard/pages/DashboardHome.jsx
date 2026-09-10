@@ -98,8 +98,8 @@ export default function DashboardHome() {
               工作台
             </span>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            欢迎回来，创作者 👋
+          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-2">
+            欢迎回来，创作者 <Icons.Sparkles className="w-7 h-7 text-brand-400" />
           </h1>
           <p className="text-dark-400 text-sm leading-relaxed max-w-xl">
             从一条视频链接开始，5步生成可投放的短视频成片。点击下方流程入口，或从「文案提取」开始你的创作。
