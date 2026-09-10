@@ -191,6 +191,8 @@ export const SIDEBAR_ITEMS = [
   { id: 'digital-human', name: '数字人口播', icon: 'UserCircle', path: '/dashboard/digital-human' },
   { id: 'edit', name: '剪辑合成', icon: 'Film', path: '/dashboard/edit' },
   { id: 'mixed-edit', name: '智能混剪', icon: 'Shuffle', path: '/dashboard/mixed-edit' },
+  { id: 'text-to-video', name: '文生视频', icon: 'Type', path: '/dashboard/text-to-video' },
+  { id: 'image-to-video', name: '图生视频', icon: 'Image', path: '/dashboard/image-to-video' },
   { id: 'publish', name: '多平台发布', icon: 'Share2', path: '/dashboard/publish' },
   { id: 'assets', name: '素材资产库', icon: 'FolderOpen', path: '/dashboard/assets' },
   { id: 'tasks', name: '任务中心', icon: 'ListChecks', path: '/dashboard/tasks' },

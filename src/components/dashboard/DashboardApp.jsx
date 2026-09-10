@@ -11,6 +11,8 @@ import VoiceTTS from './pages/VoiceTTS'
 import DigitalHuman from './pages/DigitalHuman'
 import Editing from './pages/Editing'
 import MixedEdit from './pages/MixedEdit'
+import TextToVideo from './pages/TextToVideo'
+import ImageToVideo from './pages/ImageToVideo'
 import Publishing from './pages/Publishing'
 import AssetManager from './pages/AssetManager'
 import TaskCenter from './pages/TaskCenter'
@@ -229,6 +231,8 @@ export default function DashboardApp() {
             <Route path="digital-human" element={<DigitalHuman />} />
             <Route path="edit" element={<Editing />} />
             <Route path="mixed-edit" element={<MixedEdit />} />
+            <Route path="text-to-video" element={<TextToVideo />} />
+            <Route path="image-to-video" element={<ImageToVideo />} />
             <Route path="publish" element={<Publishing />} />
             <Route path="assets" element={<AssetManager />} />
             <Route path="tasks" element={<TaskCenter />} />
