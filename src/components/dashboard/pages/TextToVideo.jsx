@@ -81,11 +81,16 @@ export default function TextToVideo() {
             status: 'completed',
             createdAt: '刚刚',
             thumbnail: `bg-gradient-to-br ${styleObj?.color || 'from-brand-500 to-accent-500'}`,
-            // 生成一个模拟的MP4 Blob用于演示播放
-            videoUrl: createMockVideoBlob(),
           }
-          setGeneratedVideo(newVideo)
-          setHistory(prev => [newVideo, ...prev])
+          // 异步生成模拟视频
+          createMockVideoBlob().then(videoUrl => {
+            const videoWithUrl = { ...newVideo, videoUrl }
+            setGeneratedVideo(videoWithUrl)
+            setHistory(prev => [videoWithUrl, ...prev])
+          }).catch(() => {
+            setGeneratedVideo(newVideo)
+            setHistory(prev => [newVideo, ...prev])
+          })
         }, 500)
       }
       setProgress(Math.min(p, 100))

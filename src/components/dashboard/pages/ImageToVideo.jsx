@@ -96,10 +96,16 @@ export default function ImageToVideo() {
             status: 'completed',
             createdAt: '刚刚',
             thumbnail: uploadedImage,
-            videoUrl: createMockVideoBlob(),
           }
-          setGeneratedVideo(newVideo)
-          setHistory(prev => [newVideo, ...prev])
+          // 异步生成模拟视频
+          createMockVideoBlob().then(videoUrl => {
+            const videoWithUrl = { ...newVideo, videoUrl }
+            setGeneratedVideo(videoWithUrl)
+            setHistory(prev => [videoWithUrl, ...prev])
+          }).catch(() => {
+            setGeneratedVideo(newVideo)
+            setHistory(prev => [newVideo, ...prev])
+          })
         }, 500)
       }
       setProgress(Math.min(p, 100))
