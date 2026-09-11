@@ -1,84 +1,85 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import * as Icons from 'lucide-react'
 import {
-  ListChecks,
-  Search,
-  Clock,
-  CheckCircle2,
-  Loader2,
-  AlertCircle,
-  Filter,
-  Play,
-  Pause,
-  Eye,
-  Download,
-} from 'lucide-react'
+  getTasks,
+  removeTask,
+  clearFinishedTasks,
+  getWorkById,
+  on,
+  timeAgo,
+} from '../../../services/store'
 
 // 任务状态配置
 const STATUS_CONFIG = {
-  completed: { text: '已完成', icon: CheckCircle2, style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
-  processing: { text: '处理中', icon: Loader2, style: 'bg-brand-500/10 text-brand-400 border-brand-500/20' },
-  pending: { text: '排队中', icon: Clock, style: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
-  failed: { text: '失败', icon: AlertCircle, style: 'bg-rose-500/10 text-rose-400 border-rose-500/20' },
+  processing: { text: '进行中', icon: 'Loader2', style: 'bg-brand-500/10 text-brand-400 border-brand-500/20' },
+  completed: { text: '已完成', icon: 'CheckCircle2', style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
+  failed: { text: '失败', icon: 'XCircle', style: 'bg-red-500/10 text-red-400 border-red-500/20' },
 }
 
-// 任务类型
-const TASK_TYPES = {
-  extract: '文案提取',
-  rewrite: 'AI改写',
-  voice: '声音合成',
-  digital: '数字人',
-  edit: '剪辑合成',
-  mix: '智能混剪',
-  publish: '多平台发布',
-}
-
-// 模拟任务列表
-const TASKS = [
-  { id: 'T20260910-001', title: '夏季防晒种草口播 - 小红书', type: 'publish', status: 'completed', progress: 100, platform: 'xiaohongshu', createdAt: '2026-09-10 14:23', completedAt: '2026-09-10 14:28', duration: '5分钟' },
-  { id: 'T20260910-002', title: '职场干货分享系列 - 第3集', type: 'edit', status: 'processing', progress: 65, platform: 'douyin', createdAt: '2026-09-10 14:05', completedAt: '-', duration: '进行中' },
-  { id: 'T20260910-003', title: '美食探店Vlog混剪 - 视频号', type: 'voice', status: 'processing', progress: 40, platform: 'shipinhao', createdAt: '2026-09-10 13:48', completedAt: '-', duration: '进行中' },
-  { id: 'T20260910-004', title: '知识科普短视频 - 快手矩阵', type: 'mix', status: 'pending', progress: 0, platform: 'kuaishou', createdAt: '2026-09-10 13:30', completedAt: '-', duration: '排队中' },
-  { id: 'T20260909-018', title: '护肤好物种草 - 多平台分发', type: 'publish', status: 'completed', progress: 100, platform: 'douyin', createdAt: '2026-09-09 18:15', completedAt: '2026-09-09 18:22', duration: '7分钟' },
-  { id: 'T20260909-017', title: '防晒口播文案AI改写', type: 'rewrite', status: 'completed', progress: 100, platform: 'xiaohongshu', createdAt: '2026-09-09 17:50', completedAt: '2026-09-09 17:52', duration: '2分钟' },
-  { id: 'T20260909-016', title: '数字人口播视频生成 - 温柔学姐', type: 'digital', status: 'completed', progress: 100, platform: 'shipinhao', createdAt: '2026-09-09 16:30', completedAt: '2026-09-09 16:38', duration: '8分钟' },
-  { id: 'T20260909-015', title: '抖音文案提取 - 防晒种草', type: 'extract', status: 'completed', progress: 100, platform: 'douyin', createdAt: '2026-09-09 16:10', completedAt: '2026-09-09 16:11', duration: '1分钟' },
-  { id: 'T20260908-012', title: '快手混剪批量出片(10条)', type: 'mix', status: 'failed', progress: 30, platform: 'kuaishou', createdAt: '2026-09-08 20:45', completedAt: '-', duration: '失败' },
-]
-
-const PLATFORM_ICONS = {
-  douyin: '🎵',
-  xiaohongshu: '📕',
-  shipinhao: '📺',
-  kuaishou: '⚡',
-}
-
+// Tab 过滤配置
 const FILTER_TABS = [
   { id: 'all', name: '全部' },
-  { id: 'processing', name: '处理中' },
+  { id: 'processing', name: '进行中' },
   { id: 'completed', name: '已完成' },
-  { id: 'pending', name: '排队中' },
   { id: 'failed', name: '失败' },
 ]
 
 export default function TaskCenter() {
+  const navigate = useNavigate()
+  const [tasks, setTasks] = useState([])
   const [activeFilter, setActiveFilter] = useState('all')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedTask, setSelectedTask] = useState(null)
+  const [previewWork, setPreviewWork] = useState(null) // { name, type, url }
+  const [previewLoading, setPreviewLoading] = useState(false)
 
-  const filteredTasks = TASKS.filter((task) => {
-    const matchFilter = activeFilter === 'all' || task.status === activeFilter
-    const matchSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        task.id.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchFilter && matchSearch
-  })
+  // 加载真实任务列表
+  const refresh = useCallback(() => {
+    setTasks(getTasks())
+  }, [])
 
-  const stats = {
-    total: TASKS.length,
-    processing: TASKS.filter((t) => t.status === 'processing').length,
-    completed: TASKS.filter((t) => t.status === 'completed').length,
-    pending: TASKS.filter((t) => t.status === 'pending').length,
-    failed: TASKS.filter((t) => t.status === 'failed').length,
+  useEffect(() => {
+    refresh()
+    // 订阅任务变化，实时刷新
+    const off = on('tasks', refresh)
+    return off
+  }, [refresh])
+
+  const filteredTasks = tasks.filter((task) => activeFilter === 'all' || task.status === activeFilter)
+
+  const countOf = (status) => (status === 'all' ? tasks.length : tasks.filter((t) => t.status === status).length)
+  const finishedCount = tasks.filter((t) => t.status === 'completed' || t.status === 'failed').length
+
+  // 删除任务（仅已完成/失败）
+  const handleRemove = (task) => {
+    if (task.status === 'processing') return
+    removeTask(task.id)
   }
+
+  // 清空已结束任务
+  const handleClearFinished = () => {
+    clearFinishedTasks()
+  }
+
+  // 查看作品（已完成且有关联 workId）
+  const handleViewWork = async (task) => {
+    if (!task.workId) return
+    setPreviewLoading(true)
+    try {
+      const work = await getWorkById(task.workId)
+      if (work) {
+        setPreviewWork(work)
+      }
+    } catch { /* 忽略读取失败 */ } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const stats = [
+    { label: '总任务', value: tasks.length, icon: 'ListChecks', color: 'from-brand-500 to-accent-500' },
+    { label: '进行中', value: countOf('processing'), icon: 'Loader2', color: 'from-blue-500 to-cyan-500' },
+    { label: '已完成', value: countOf('completed'), icon: 'CheckCircle2', color: 'from-emerald-500 to-teal-500' },
+    { label: '失败', value: countOf('failed'), icon: 'XCircle', color: 'from-rose-500 to-pink-500' },
+  ]
 
   return (
     <div className="space-y-6">
@@ -86,25 +87,19 @@ export default function TaskCenter() {
       <div>
         <div className="flex items-center gap-2 mb-2">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center">
-            <ListChecks className="w-4 h-4 text-white" />
+            <Icons.ListChecks className="w-4 h-4 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">任务中心</h1>
         </div>
         <p className="text-sm text-dark-400 ml-10">
-          追踪每一条视频的处理与发布状态，全流程可视化
+          追踪每一次生成与发布的真实状态，全流程可视化
         </p>
       </div>
 
-      {/* 统计概览 */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        {[
-          { label: '总任务', value: stats.total, icon: ListChecks, color: 'from-brand-500 to-accent-500' },
-          { label: '处理中', value: stats.processing, icon: Loader2, color: 'from-blue-500 to-cyan-500' },
-          { label: '已完成', value: stats.completed, icon: CheckCircle2, color: 'from-emerald-500 to-teal-500' },
-          { label: '排队中', value: stats.pending, icon: Clock, color: 'from-amber-500 to-orange-500' },
-          { label: '失败', value: stats.failed, icon: AlertCircle, color: 'from-rose-500 to-pink-500' },
-        ].map((stat) => {
-          const Icon = stat.icon
+      {/* 统计概览（真实计数） */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {stats.map((stat) => {
+          const Icon = Icons[stat.icon] || Icons.Circle
           return (
             <div key={stat.label} className="glass-card rounded-2xl p-4">
               <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center mb-3`}>
@@ -117,50 +112,55 @@ export default function TaskCenter() {
         })}
       </div>
 
-      {/* 工具栏 */}
+      {/* 工具栏：Tab 过滤 + 清空已结束 */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex gap-1 p-1 bg-dark-900/80 rounded-xl border border-white/5">
           {FILTER_TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                 activeFilter === tab.id
                   ? 'bg-brand-500/15 text-brand-300'
                   : 'text-dark-400 hover:text-white'
               }`}
             >
               {tab.name}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                activeFilter === tab.id ? 'bg-brand-500/20 text-brand-300' : 'bg-dark-800 text-dark-500'
+              }`}>
+                {countOf(tab.id)}
+              </span>
             </button>
           ))}
         </div>
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索任务名称或ID..."
-            className="w-full bg-dark-900/80 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all"
-          />
-        </div>
+        <div className="flex-1" />
+        <button
+          onClick={handleClearFinished}
+          disabled={finishedCount === 0}
+          className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-medium text-dark-300 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Icons.Trash2 className="w-3.5 h-3.5" />
+          清空已结束（{finishedCount}）
+        </button>
       </div>
 
-      {/* 任务列表 */}
+      {/* 任务列表（真实数据） */}
       <div className="glass-card rounded-2xl overflow-hidden">
-        {filteredTasks.map((task, idx) => {
-          const statusConfig = STATUS_CONFIG[task.status]
-          const StatusIcon = statusConfig.icon
+        {filteredTasks.length > 0 ? filteredTasks.map((task, idx) => {
+          const statusConfig = STATUS_CONFIG[task.status] || STATUS_CONFIG.processing
+          const StatusIcon = Icons[statusConfig.icon] || Icons.Circle
+          const canViewWork = task.status === 'completed' && task.workId
+          const canDelete = task.status === 'completed' || task.status === 'failed'
           return (
             <div
               key={task.id}
-              className={`flex items-center gap-4 p-4 hover:bg-white/5 transition-colors cursor-pointer ${
+              className={`flex items-center gap-4 p-4 hover:bg-white/5 transition-colors ${
                 idx !== filteredTasks.length - 1 ? 'border-b border-white/5' : ''
-              } ${selectedTask === task.id ? 'bg-brand-500/5' : ''}`}
-              onClick={() => setSelectedTask(selectedTask === task.id ? null : task.id)}
+              }`}
             >
               {/* 状态图标 */}
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${statusConfig.style} border`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border ${statusConfig.style}`}>
                 <StatusIcon className={`w-5 h-5 ${task.status === 'processing' ? 'animate-spin' : ''}`} />
               </div>
 
@@ -168,73 +168,128 @@ export default function TaskCenter() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-sm font-medium text-white truncate">{task.title}</span>
-                  <span className="text-base">{PLATFORM_ICONS[task.platform]}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-dark-800 text-dark-400 text-[10px] flex-shrink-0">
+                    {task.type}
+                  </span>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-dark-400">
-                  <span className="font-mono">{task.id}</span>
-                  <span>·</span>
-                  <span>{TASK_TYPES[task.type]}</span>
-                  <span>·</span>
-                  <span>{task.createdAt}</span>
+                <div className="flex items-center gap-2 text-xs text-dark-400 flex-wrap">
+                  <span>{timeAgo(task.createdAt)}</span>
+                  {task.module && (
+                    <>
+                      <span className="text-dark-600">·</span>
+                      <span>{task.module}</span>
+                    </>
+                  )}
+                  {task.status === 'failed' && task.error && (
+                    <>
+                      <span className="text-dark-600">·</span>
+                      <span className="text-red-400 truncate max-w-[280px]" title={task.error}>
+                        失败原因：{task.error}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
-              {/* 进度 */}
+              {/* 状态 + 真实进度 */}
               <div className="hidden md:flex flex-col items-end gap-1.5 w-32 flex-shrink-0">
                 <span className={`px-2 py-0.5 rounded-md text-xs border ${statusConfig.style}`}>
                   {statusConfig.text}
                 </span>
-                {task.progress > 0 && task.status !== 'completed' && (
+                {task.status === 'processing' && (
                   <div className="w-full h-1 rounded-full bg-dark-800 overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-brand-500 to-accent-500 rounded-full transition-all"
-                      style={{ width: `${task.progress}%` }}
+                      style={{ width: `${task.progress || 0}%` }}
                     />
                   </div>
                 )}
               </div>
 
-              {/* 耗时 */}
-              <div className="hidden lg:block text-right w-20 flex-shrink-0">
-                <div className="text-xs text-dark-300">{task.duration}</div>
-              </div>
-
-              {/* 操作 */}
-              <div className="flex items-center gap-1 flex-shrink-0">
-                {task.status === 'completed' && (
-                  <>
-                    <button className="p-1.5 rounded-lg text-dark-400 hover:text-white hover:bg-white/5 transition-all">
-                      <Eye className="w-4 h-4" />
-                    </button>
-                    <button className="p-1.5 rounded-lg text-dark-400 hover:text-white hover:bg-white/5 transition-all">
-                      <Download className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
-                {task.status === 'processing' && (
-                  <button className="p-1.5 rounded-lg text-dark-400 hover:text-white hover:bg-white/5 transition-all">
-                    <Pause className="w-4 h-4" />
+              {/* 操作区 */}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {canViewWork && (
+                  <button
+                    onClick={() => handleViewWork(task)}
+                    disabled={previewLoading}
+                    className="px-2.5 py-1.5 rounded-lg bg-brand-500/10 border border-brand-500/20 text-brand-400 text-xs font-medium hover:bg-brand-500/20 transition-all flex items-center gap-1"
+                  >
+                    <Icons.Eye className="w-3.5 h-3.5" />
+                    查看作品
                   </button>
                 )}
-                {task.status === 'pending' && (
-                  <button className="p-1.5 rounded-lg text-dark-400 hover:text-white hover:bg-white/5 transition-all">
-                    <Play className="w-4 h-4" />
+                {canDelete && (
+                  <button
+                    onClick={() => handleRemove(task)}
+                    className="p-1.5 rounded-lg text-dark-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                    title="删除任务"
+                  >
+                    <Icons.Trash2 className="w-4 h-4" />
                   </button>
                 )}
               </div>
             </div>
           )
-        })}
-        {filteredTasks.length === 0 && (
+        }) : (
+          /* 空状态 */
           <div className="p-12 flex flex-col items-center justify-center text-center">
             <div className="w-14 h-14 rounded-2xl bg-dark-800 flex items-center justify-center mb-3">
-              <ListChecks className="w-6 h-6 text-dark-500" />
+              <Icons.ListChecks className="w-6 h-6 text-dark-500" />
             </div>
-            <p className="text-sm text-dark-400 mb-1">没有找到匹配的任务</p>
-            <p className="text-xs text-dark-500">试试更换筛选条件或搜索关键词</p>
+            <p className="text-sm text-dark-400 mb-1">
+              {activeFilter === 'all' ? '暂无任务记录' : `暂无${FILTER_TABS.find((t) => t.id === activeFilter)?.name}任务`}
+            </p>
+            <p className="text-xs text-dark-500 mb-4">从「文生视频」开始你的第一次 AI 创作，任务会自动出现在这里</p>
+            <button
+              onClick={() => navigate('/dashboard/text-to-video')}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-500 to-accent-500 text-white text-xs font-semibold flex items-center gap-1.5 hover:shadow-lg hover:shadow-brand-500/30 transition-all"
+            >
+              <Icons.Type className="w-3.5 h-3.5" />
+              去文生视频
+            </button>
           </div>
         )}
       </div>
+
+      {/* 作品预览弹窗 */}
+      {previewWork && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewWork(null)}
+        >
+          <div
+            className="glass-card rounded-2xl w-full max-w-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-white truncate">{previewWork.name}</h3>
+                <p className="text-xs text-dark-400 mt-0.5">
+                  {previewWork.type === 'video' ? '视频作品' : previewWork.type === 'audio' ? '音频作品' : '图片作品'}
+                  {' · '}{timeAgo(previewWork.createdAt)}
+                </p>
+              </div>
+              <button
+                onClick={() => setPreviewWork(null)}
+                className="p-1.5 rounded-lg text-dark-400 hover:text-white hover:bg-white/5 transition-all flex-shrink-0"
+              >
+                <Icons.X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 bg-dark-950/60 flex items-center justify-center max-h-[70vh]">
+              {previewWork.type === 'video' && (
+                <video src={previewWork.url} controls autoPlay className="max-w-full max-h-[60vh] rounded-xl" />
+              )}
+              {previewWork.type === 'audio' && (
+                <audio src={previewWork.url} controls autoPlay className="w-full" />
+              )}
+              {previewWork.type === 'image' && (
+                <img src={previewWork.url} alt={previewWork.name} className="max-w-full max-h-[60vh] rounded-xl object-contain" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,180 +1,206 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  Sparkles,
-  Wand2,
-  ChevronDown,
-  Hash,
-  FileText,
-  ArrowRight,
-  Loader2,
-  RefreshCw,
-  Copy,
-  Check,
-  Sliders,
-} from 'lucide-react'
+import * as Icons from 'lucide-react'
+import { generateText } from '../../../services/aiApi'
+import { saveScript, getScripts, deleteScript, createTask, updateTask, on, timeAgo } from '../../../services/store'
 
-// 人设风格选项
-const PERSONA_STYLES = [
-  { id: 'lecturer', name: '专业讲师', desc: '逻辑清晰、数据说话' },
-  { id: 'lifestyle', name: '生活博主', desc: '亲切自然、生活感强' },
-  { id: 'funny', name: '搞笑达人', desc: '幽默梗多、节奏欢快' },
-  { id: 'knowledge', name: '知识科普', desc: '通俗易懂、干货满满' },
-  { id: 'seeding', name: '种草达人', desc: '情绪饱满、安利感强' },
-]
-
-// 语气选项
-const TONE_OPTIONS = [
-  { id: 'warm', name: '温暖亲切' },
-  { id: 'pro', name: '专业权威' },
-  { id: 'passion', name: '激情有力' },
-  { id: 'calm', name: '平和舒缓' },
-  { id: 'fun', name: '活泼有趣' },
+// 改写风格（每个风格对应一段真实的 AI system 指令）
+const REWRITE_STYLES = [
+  {
+    id: 'seeding',
+    name: '爆款种草',
+    desc: '情绪饱满、安利感强',
+    system: '你是小红书/抖音顶级种草博主，擅长情绪饱满、感染力强的爆款种草文案。改写要求：用"姐妹们/宝子们"式亲昵口吻，多用感叹号和口语短句，突出痛点与使用效果，制造"不买就亏"的紧迫感，结尾带行动号召。',
+  },
+  {
+    id: 'pro',
+    name: '专业科普',
+    desc: '逻辑清晰、数据说话',
+    system: '你是严谨的专业科普创作者。改写要求：逻辑清晰、分点论述，用专业术语和数据说话，但保持通俗易懂，去掉夸张营销语气，让内容可信、有据可查。',
+  },
+  {
+    id: 'emotion',
+    name: '情感共鸣',
+    desc: '以情动人、引发共鸣',
+    system: '你是情感类短视频文案高手。改写要求：以真实故事和细腻感受切入，用第一人称讲述，制造强烈情绪共鸣，语言真诚克制、不煽情过度，结尾留有余味。',
+  },
+  {
+    id: 'funny',
+    name: '搞笑玩梗',
+    desc: '幽默梗多、节奏欢快',
+    system: '你是搞笑短视频编剧，网感极强。改写要求：节奏欢快、梗点密集，用夸张、反转、自嘲等喜剧手法重新演绎内容，口语化表达，让观众笑着看完，但不偏离原文核心信息。',
+  },
+  {
+    id: 'minimal',
+    name: '极简干货',
+    desc: '短平快、信息密度高',
+    system: '你是干货类内容编辑。改写要求：删除一切废话和情绪铺垫，用清单式短句输出核心信息，每一条都可直接执行，信息密度最大化，适合快节奏口播。',
+  },
 ]
 
 // 改写力度
 const STRENGTH_OPTIONS = [
-  { id: 'light', name: '轻度', desc: '保留原文结构，微调表述', value: 30 },
-  { id: 'medium', name: '中度', desc: '重组句式，调整节奏', value: 60 },
-  { id: 'heavy', name: '重度', desc: '完全重写，仅保留核心信息', value: 100 },
+  { id: 'light', name: '轻度', desc: '保留原文结构，微调表述', instruction: '轻度改写：保留原文的整体结构和段落顺序，只调整用词和句式，让表达焕然一新。' },
+  { id: 'medium', name: '中度', desc: '重组句式，调整节奏', instruction: '中度改写：重新组织句式和叙事节奏，可以调整段落顺序，但保留原文的全部关键信息。' },
+  { id: 'heavy', name: '重度', desc: '完全重写，仅保留核心信息', instruction: '重度改写：完全推倒重写，只保留核心信息点，用全新的结构、视角和表达方式呈现。' },
 ]
 
-// 原文（模拟提取结果）
-const ORIGINAL_TEXT = {
-  title: '夏天防晒别只知道涂脸！这3个部位漏了等于白涂',
-  body: `姐妹们听我说，夏天防晒真的不只是涂脸就够了！
-很多人涂防晒只涂脸，结果脖子、手背、耳朵后面全晒黑了，真的太亏了！
-今天给大家总结了防晒最容易被忽略的3个关键部位：
+// 语气选项
+const TONE_OPTIONS = [
+  { id: 'warm', name: '温暖亲切', instruction: '语气温暖亲切，像和老朋友聊天。' },
+  { id: 'pro', name: '专业权威', instruction: '语气专业权威，沉稳可信。' },
+  { id: 'passion', name: '激情有力', instruction: '语气激情有力，富有感染力。' },
+  { id: 'calm', name: '平和舒缓', instruction: '语气平和舒缓，娓娓道来。' },
+  { id: 'fun', name: '活泼有趣', instruction: '语气活泼有趣，轻松幽默。' },
+]
 
-第一：耳后。这个地方超容易被忽略，但紫外线直射特别严重。
-第二：手背。手背皮肤薄，晒老了长斑很难逆转。
-第三：脚背。穿凉鞋一定要涂，不然黑白分明太尴尬了。
+// 解析 AI 返回（约定【标题候选】【改写正文】【话题标签】分隔符），失败返回 null 由调用方整体展示
+const parseRewriteResult = (text) => {
+  if (!text) return null
+  const clean = text.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '').trim()
+  const titlesMatch = clean.match(/【标题候选】([\s\S]*?)(?=【改写正文】)/)
+  const bodyMatch = clean.match(/【改写正文】([\s\S]*?)(?=【话题标签】|$)/)
+  const tagsMatch = clean.match(/【话题标签】([\s\S]*)$/)
+  if (!titlesMatch && !bodyMatch) return null
 
-另外防晒量一定要够，脸至少一元硬币大小，出门前20分钟涂好，每2小时补涂一次。
-防晒不是选最贵的，是选最适合自己肤质的，油皮选清爽型，干皮选滋润型。
-做好这些，整个夏天白到发光！`,
-  hashtags: ['#防晒', '#夏日护肤', '#美白', '#防晒误区', '#护肤干货'],
-}
-
-// 模拟改写结果
-const generateRewriteResult = (persona, strength, tone) => {
-  const personaName = PERSONA_STYLES.find((p) => p.id === persona)?.name || ''
-  const results = {
-    lecturer: {
-      title: '防晒科普｜90%的人涂防晒都漏了这3个部位，皮肤科医生告诉你为什么',
-      body: `从皮肤科学角度来说，面部防晒覆盖率仅占人体暴露皮肤的不足30%。
-临床数据表明，耳后、手背、脚背这三个部位的紫外线暴露量，是面部的1.5到3倍。
-
-第一，耳后区域：该部位皮肤薄、皮脂腺少，UVB穿透率更高，是日光性皮炎高发区。
-第二，手背：真皮层较薄，长期暴露易出现光老化性色素沉着，且难以逆转。
-第三，脚背：夏季穿凉鞋时完全暴露，UV指数高时30分钟即可造成明显分界线。
-
-补充用量标准：面部需2mg/cm²，约一元硬币大小；SPF需在出门前20分钟形成有效膜；户外每2小时补涂。
-选择原则：油性肌肤选化学防晒（清爽型），干性肌肤选物理防晒（滋润型）。
-遵循以上规范，可显著降低光老化风险。`,
-      hashtags: ['#防晒科普', '#皮肤科学', '#光老化', '#防晒指南', '#护肤知识', '#健康科普'],
-    },
-    lifestyle: {
-      title: '我踩了3年防晒坑才发现！这3个地方没涂等于白防晒了',
-      body: `宝子们，我真的后悔没早点知道这个！
-之前每年夏天脸涂得白白的，结果脖子以下黑了两个度，绝了！
-今天必须把防晒最容易漏的3个地方告诉你们：
-
-第一个就是耳后！平时真的完全想不起来，但每次照镜子发现耳后那条线超明显。
-第二个手背，手是第二张脸啊姐妹们，手背长斑真的显老十岁。
-第三个脚背，穿凉鞋不涂，脚上那个黑白印子，拍照片都尴尬。
-
-还有涂防晒的量一定要够！脸要涂一元硬币那么大，出门前20分钟涂，每2小时补一次。
-我之前就是因为舍不得涂，效果一直不好。油皮姐妹选清爽的，干皮选滋润的就行啦～
-做好这些，今年夏天一起白到发光！`,
-      hashtags: ['#防晒', '#夏日护肤', '#变美日记', '#美白日常', '#防晒干货', '#护肤分享'],
-    },
-    funny: {
-      title: '防晒只涂脸？你脖子以下不配拥有姓名吗！',
-      body: `家人们谁懂啊！涂防晒只涂脸是什么操作？
-脖子以下全是黑皮，脸白得跟灯泡似的，走在路上像个人形反差色卡！
-
-来来来，记住防晒必须涂的3个"隐形死角"：
-
-耳朵后面：对，就是那个你从来想不起来的地方，结果晒完一条线明明白白。
-手背：你的手也是要面子的人好吗！手背一长斑，年龄直接+10岁起步。
-脚背：穿凉鞋不涂防晒，脚上黑白分明，拍张照一看，好家伙，脚趾头有自己的肤色分区。
-
-防晒量！要！够！脸上一元硬币大小起步，别抠搜的。
-出门前20分钟涂好，户外每2小时补一次，油皮选清爽干皮选滋润。
-听话，涂全了，今年夏天你就是整条街最白的崽！`,
-      hashtags: ['#防晒', '#夏日必看', '#搞笑护肤', '#防晒误区', '#变白攻略', '#护肤吐槽'],
-    },
-    knowledge: {
-      title: '【硬核科普】防晒不止涂脸！3个常被忽略的关键部位及科学用量',
-      body: `防晒的核心目标，是阻挡紫外线（UVA+UVB）对皮肤的光损伤。
-大多数人只涂面部，却忽略了3个紫外线暴露量极高的部位：
-
-1. 耳后：皮肤薄、皮脂腺少，紫外线穿透率高，是光损伤的高发区。
-2. 手背：真皮层薄，长期暴露易产生不可逆的光老化色斑。
-3. 脚背：穿凉鞋时完全暴露，短时间即可形成明显色差分界线。
-
-科学用量：面部需2mg/cm²（约一元硬币大小），全身约30g。
-使用时间：出门前20分钟涂抹成膜，户外每2小时补涂一次。
-选品原则：油性肌肤→化学防晒（清爽型）；干性肌肤→物理防晒（滋润型）。
-
-科学防晒，从全覆盖开始。`,
-      hashtags: ['#防晒科普', '#光防护', '#护肤科学', '#防晒知识', '#健康护肤', '#紫外线防护'],
-    },
-    seeding: {
-      title: '天哪！涂了这么多年防晒竟然白涂了？这3个地方你一定没涂！',
-      body: `姐妹们！！我真的要尖叫了！！
-之前一直觉得脸涂白就够了，结果照镜子一看，脖子以下黑了两个度！
-今天必须给你们安利防晒最容易忽略的3个宝藏部位！涂全了真的白到发光！
-
-第一个：耳后！天哪这个位置平时根本想不起来，但晒完一条线超级明显！
-第二个：手背！手是第二张脸，手背一长斑瞬间显老，姐妹们一定要重视！
-第三个：脚背！穿凉鞋不涂，脚上黑白分明拍照超尴尬！
-
-还有用量超级重要！脸要涂一元硬币大小，别省！
-出门前20分钟涂，每2小时补涂一次，油皮选清爽干皮选滋润。
-按我说的来，今年夏天白到发光不是梦！冲冲冲！`,
-      hashtags: ['#防晒安利', '#夏日必买', '#美白神器', '#防晒必看', '#护肤好物', '#变白攻略'],
-    },
-  }
-
-  return results[persona] || results.lecturer
+  const titles = titlesMatch
+    ? titlesMatch[1]
+        .split('\n')
+        .map((l) => l.replace(/^\s*(?:[-*·•]|\d+[.、)）])\s*/, '').trim())
+        .filter(Boolean)
+        .slice(0, 3)
+    : []
+  const body = bodyMatch ? bodyMatch[1].trim() : ''
+  const tags = tagsMatch
+    ? (tagsMatch[1].match(/#[^\s#，,。]+/g) || []).map((t) => t.trim()).slice(0, 8)
+    : []
+  if (!body && !titles.length) return null
+  return { titles, body, tags, raw: clean }
 }
 
 export default function AIRewrite() {
   const navigate = useNavigate()
-  const [persona, setPersona] = useState('lifestyle')
+  const [sourceText, setSourceText] = useState('')
+  const [styleId, setStyleId] = useState('seeding')
   const [strength, setStrength] = useState('medium')
   const [tone, setTone] = useState('warm')
-  const [rewriting, setRewriting] = useState(false)
-  const [result, setResult] = useState(null)
-  const [copied, setCopied] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [rewriting, setRewriting] = useState(false)
+  const [error, setError] = useState('')
+  // result: { parsed, titles, selTitle, body, tagsText, raw }
+  const [result, setResult] = useState(null)
+  const [copiedKey, setCopiedKey] = useState('')
+  const [saveState, setSaveState] = useState('idle') // idle | saved
+  const [history, setHistory] = useState([])
+  const [expandedId, setExpandedId] = useState(null)
+  const copyTimerRef = useRef(null)
 
-  const handleRewrite = () => {
+  // 真实历史记录：kind = '改写' 的文案，订阅实时刷新
+  useEffect(() => {
+    const load = () => setHistory(getScripts().filter((s) => s.kind === '改写'))
+    load()
+    const off = on('scripts', load)
+    return () => {
+      off()
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
+  const flashCopied = (key) => {
+    setCopiedKey(key)
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = setTimeout(() => setCopiedKey(''), 2000)
+  }
+
+  const doCopy = async (text, key) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      flashCopied(key)
+    } catch {
+      setError('复制失败，请检查浏览器剪贴板权限')
+    }
+  }
+
+  const buildFullText = () => {
+    if (!result) return ''
+    if (!result.parsed) return result.raw
+    const tagLine = result.tagsText.trim()
+    return `${result.selTitle ? result.selTitle + '\n\n' : ''}${result.body}${tagLine ? `\n\n${tagLine}` : ''}`
+  }
+
+  const handleRewrite = async () => {
+    const text = sourceText.trim()
+    if (!text || rewriting) return
     setRewriting(true)
+    setError('')
     setResult(null)
-    setTimeout(() => {
-      const rewriteResult = generateRewriteResult(persona, strength, tone)
-      setResult(rewriteResult)
+    setSaveState('idle')
+
+    const style = REWRITE_STYLES.find((s) => s.id === styleId)
+    const strengthOpt = STRENGTH_OPTIONS.find((s) => s.id === strength)
+    const toneOpt = TONE_OPTIONS.find((t) => t.id === tone)
+    const task = createTask({ title: `AI改写：${text.slice(0, 20)}${text.length > 20 ? '…' : ''}`, type: 'AI改写', module: 'rewrite' })
+
+    try {
+      const system = `${style.system}\n${toneOpt.instruction}\n${strengthOpt.instruction}`
+      const prompt = `请把下面的短视频文案按系统设定的人设风格改写，并严格按以下格式输出（不要输出任何额外说明，不要使用代码块）：
+【标题候选】
+1. （改写后的标题一）
+2. （改写后的标题二）
+3. （改写后的标题三）
+【改写正文】
+（改写后的正文全文）
+【话题标签】
+（5-8 个 #话题 标签，空格分隔）
+
+原文如下：
+${text}`
+
+      const raw = await generateText(prompt, { system })
+      const parsed = parseRewriteResult(raw)
+      if (parsed) {
+        setResult({
+          parsed: true,
+          titles: parsed.titles,
+          selTitle: parsed.titles[0] || '',
+          body: parsed.body,
+          tagsText: parsed.tags.join(' '),
+          raw: parsed.raw,
+        })
+      } else {
+        // 解析失败：整体展示 AI 原文
+        setResult({ parsed: false, titles: [], selTitle: '', body: raw, tagsText: '', raw })
+      }
+      updateTask(task.id, { status: 'completed', progress: 100, finishedAt: Date.now() })
+    } catch (err) {
+      setError(err.message || 'AI 改写失败，请稍后重试')
+      updateTask(task.id, { status: 'failed', progress: 0, error: err.message || '改写失败', finishedAt: Date.now() })
+    } finally {
       setRewriting(false)
-    }, 1500)
+    }
   }
 
-  const handleCopy = () => {
-    if (!result) return
-    const fullText = `${result.title}\n\n${result.body}\n\n${result.hashtags.join(' ')}`
-    navigator.clipboard?.writeText(fullText)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const handleSave = () => {
+    if (!result || saveState === 'saved') return
+    const content = buildFullText().trim()
+    if (!content) return
+    const title =
+      (result.parsed && result.selTitle.trim()) ||
+      content.split('\n').find((l) => l.trim())?.trim().slice(0, 40) ||
+      '改写文案'
+    saveScript({
+      title,
+      content,
+      tags: result.parsed ? result.tagsText.trim() : '',
+      source: `AI改写 · ${REWRITE_STYLES.find((s) => s.id === styleId)?.name || ''}`,
+      kind: '改写',
+    })
+    setSaveState('saved')
   }
 
-  const handleNext = () => {
-    navigate('/dashboard/voice')
-  }
-
-  const currentPersona = PERSONA_STYLES.find((p) => p.id === persona)
+  const currentStyle = REWRITE_STYLES.find((s) => s.id === styleId)
   const currentStrength = STRENGTH_OPTIONS.find((s) => s.id === strength)
+  const currentTone = TONE_OPTIONS.find((t) => t.id === tone)
 
   return (
     <div className="space-y-6">
@@ -182,49 +208,42 @@ export default function AIRewrite() {
       <div>
         <div className="flex items-center gap-2 mb-2">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
+            <Icons.Sparkles className="w-4 h-4 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">AI改写定风格</h1>
         </div>
         <p className="text-sm text-dark-400 ml-10">
-          一键AI改写成你的人设语气，自动生成新标题与话题，避免同质化
+          输入原文，AI 实时改写成你的人设语气，自动生成新标题与话题，避免同质化
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 左侧：原文显示区 */}
+        {/* 左侧：原文输入区 */}
         <div className="glass-card rounded-2xl p-6 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <FileText className="w-5 h-5 text-dark-400" />
-              <h2 className="text-base font-semibold text-white">原片文案</h2>
+              <Icons.FileText className="w-5 h-5 text-dark-400" />
+              <h2 className="text-base font-semibold text-white">原文</h2>
             </div>
-            <span className="px-2 py-0.5 rounded-md bg-dark-800 text-dark-400 text-xs">原文</span>
+            <span className="text-xs text-dark-500">{sourceText.length} 字</span>
           </div>
-
-          <div className="space-y-4 flex-1">
-            <div>
-              <div className="text-xs text-dark-400 mb-1.5">原标题</div>
-              <p className="text-sm font-medium text-dark-200 leading-relaxed">{ORIGINAL_TEXT.title}</p>
-            </div>
-            <div>
-              <div className="text-xs text-dark-400 mb-1.5">原正文</div>
-              <div className="bg-dark-950/60 rounded-xl p-4 border border-white/5 max-h-[320px] overflow-y-auto">
-                <pre className="text-sm text-dark-300 whitespace-pre-wrap leading-relaxed font-sans">
-                  {ORIGINAL_TEXT.body}
-                </pre>
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-dark-400 mb-1.5">原话题标签</div>
-              <div className="flex flex-wrap gap-1.5">
-                {ORIGINAL_TEXT.hashtags.map((tag, idx) => (
-                  <span key={idx} className="px-2 py-0.5 rounded-md bg-dark-800 text-dark-400 text-xs">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
+          <textarea
+            value={sourceText}
+            onChange={(e) => setSourceText(e.target.value)}
+            rows={14}
+            placeholder="粘贴或输入需要改写的短视频文案（可从「文案提取」页面提取后复制过来）..."
+            className="flex-1 w-full bg-dark-950/60 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder-dark-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 transition-all resize-none leading-relaxed"
+          />
+          <div className="flex items-center justify-between mt-3">
+            <p className="text-xs text-dark-500">原文越完整，改写效果越好</p>
+            {sourceText && (
+              <button
+                onClick={() => setSourceText('')}
+                className="text-xs text-dark-400 hover:text-white transition-colors"
+              >
+                清空
+              </button>
+            )}
           </div>
         </div>
 
@@ -232,73 +251,140 @@ export default function AIRewrite() {
         <div className="glass-card rounded-2xl p-6 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Wand2 className="w-5 h-5 text-brand-400" />
+              <Icons.Wand2 className="w-5 h-5 text-brand-400" />
               <h2 className="text-base font-semibold text-white">改写结果</h2>
             </div>
-            {result && (
-              <button
-                onClick={handleCopy}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-dark-300 hover:text-white hover:bg-white/10 transition-all"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                {copied ? '已复制' : '复制'}
-              </button>
+            {result && !rewriting && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => doCopy(buildFullText(), 'result')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-dark-300 hover:text-white hover:bg-white/10 transition-all"
+                >
+                  {copiedKey === 'result' ? <Icons.Check className="w-3.5 h-3.5 text-emerald-400" /> : <Icons.Copy className="w-3.5 h-3.5" />}
+                  {copiedKey === 'result' ? '已复制' : '复制'}
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saveState === 'saved'}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 border border-brand-500/20 text-xs text-brand-300 hover:bg-brand-500/20 transition-all disabled:opacity-60"
+                >
+                  {saveState === 'saved' ? <Icons.Check className="w-3.5 h-3.5 text-emerald-400" /> : <Icons.Save className="w-3.5 h-3.5" />}
+                  {saveState === 'saved' ? '已保存' : '保存文案'}
+                </button>
+              </div>
             )}
           </div>
 
+          {/* 真实请求中状态 */}
           {rewriting && (
             <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <Loader2 className="w-8 h-8 text-brand-400 animate-spin mb-3" />
-              <p className="text-sm text-dark-400">AI正在改写中...</p>
+              <Icons.Loader2 className="w-8 h-8 text-brand-400 animate-spin mb-3" />
+              <p className="text-sm text-dark-400">AI 正在改写中...</p>
               <p className="text-xs text-dark-500 mt-1">
-                {currentPersona?.name} · {currentStrength?.name}改写 · {TONE_OPTIONS.find((t) => t.id === tone)?.name}
+                {currentStyle?.name} · {currentStrength?.name}改写 · {currentTone?.name}
               </p>
             </div>
           )}
 
-          {!rewriting && result && (
-            <div className="space-y-4 flex-1 animate-fade-in">
-              <div>
-                <div className="text-xs text-brand-400 mb-1.5 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  新标题
-                </div>
-                <p className="text-sm font-semibold text-white leading-relaxed">{result.title}</p>
+          {/* 错误提示 */}
+          {!rewriting && error && (
+            <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-3">
+                <Icons.AlertCircle className="w-6 h-6 text-rose-400" />
               </div>
-              <div>
-                <div className="text-xs text-dark-400 mb-1.5">新正文</div>
-                <div className="bg-dark-950/60 rounded-xl p-4 border border-white/5 max-h-[280px] overflow-y-auto">
-                  <pre className="text-sm text-dark-200 whitespace-pre-wrap leading-relaxed font-sans">
-                    {result.body}
-                  </pre>
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-dark-400 mb-1.5 flex items-center gap-1">
-                  <Hash className="w-3.5 h-3.5" />
-                  新话题标签
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {result.hashtags.map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2.5 py-1 rounded-lg bg-brand-500/10 text-brand-300 text-xs border border-brand-500/20"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <p className="text-sm text-rose-300 mb-1">改写失败</p>
+              <p className="text-xs text-dark-500 max-w-xs">{error}</p>
+              <button
+                onClick={handleRewrite}
+                className="mt-4 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs text-dark-300 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1.5"
+              >
+                <Icons.RefreshCw className="w-3.5 h-3.5" />
+                重试
+              </button>
             </div>
           )}
 
-          {!rewriting && !result && (
+          {/* 结果（可编辑） */}
+          {!rewriting && !error && result && (
+            <div className="space-y-4 flex-1 animate-fade-in">
+              {result.parsed ? (
+                <>
+                  <div>
+                    <div className="text-xs text-brand-400 mb-1.5 flex items-center gap-1">
+                      <Icons.Sparkles className="w-3.5 h-3.5" />
+                      新标题（点击候选可切换，可直接编辑）
+                    </div>
+                    <input
+                      value={result.selTitle}
+                      onChange={(e) => setResult({ ...result, selTitle: e.target.value })}
+                      placeholder="标题"
+                      className="w-full bg-dark-900/80 border border-white/10 rounded-xl px-3 py-2.5 text-sm font-semibold text-white placeholder-dark-500 focus:outline-none focus:border-brand-500 transition-all"
+                    />
+                    {result.titles.length > 0 && (
+                      <div className="flex flex-col gap-1.5 mt-2">
+                        {result.titles.map((t, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setResult({ ...result, selTitle: t })}
+                            className={`text-left px-3 py-2 rounded-lg text-xs border transition-all ${
+                              result.selTitle === t
+                                ? 'bg-brand-500/10 border-brand-500/40 text-brand-300'
+                                : 'bg-dark-900/50 border-white/5 text-dark-400 hover:text-white'
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs text-dark-400 mb-1.5">新正文（可直接编辑）</div>
+                    <textarea
+                      value={result.body}
+                      onChange={(e) => setResult({ ...result, body: e.target.value })}
+                      rows={9}
+                      className="w-full bg-dark-950/60 border border-white/5 rounded-xl px-4 py-3 text-sm text-dark-200 focus:outline-none focus:border-brand-500 transition-all resize-none leading-relaxed"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-dark-400 mb-1.5 flex items-center gap-1">
+                      <Icons.Hash className="w-3.5 h-3.5" />
+                      新话题标签（空格分隔，可直接编辑）
+                    </div>
+                    <input
+                      value={result.tagsText}
+                      onChange={(e) => setResult({ ...result, tagsText: e.target.value })}
+                      placeholder="#话题1 #话题2"
+                      className="w-full bg-dark-900/80 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-brand-300 placeholder-dark-500 focus:outline-none focus:border-brand-500 transition-all"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <div className="text-xs text-amber-400 mb-1.5 flex items-center gap-1">
+                    <Icons.AlertCircle className="w-3.5 h-3.5" />
+                    AI 未按约定格式返回，已整体展示（可直接编辑）
+                  </div>
+                  <textarea
+                    value={result.raw}
+                    onChange={(e) => setResult({ ...result, raw: e.target.value })}
+                    rows={16}
+                    className="w-full bg-dark-950/60 border border-white/5 rounded-xl px-4 py-3 text-sm text-dark-200 focus:outline-none focus:border-brand-500 transition-all resize-none leading-relaxed"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 空状态 */}
+          {!rewriting && !error && !result && (
             <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
               <div className="w-14 h-14 rounded-2xl bg-dark-800 flex items-center justify-center mb-3">
-                <Wand2 className="w-6 h-6 text-dark-500" />
+                <Icons.Wand2 className="w-6 h-6 text-dark-500" />
               </div>
               <p className="text-sm text-dark-400 mb-1">还没有改写结果</p>
-              <p className="text-xs text-dark-500">选择人设风格后点击「一键AI改写」</p>
+              <p className="text-xs text-dark-500">输入原文、选择风格后点击「一键AI改写」</p>
             </div>
           )}
         </div>
@@ -307,14 +393,14 @@ export default function AIRewrite() {
       {/* 中间控制区 */}
       <div className="glass-card rounded-2xl p-6">
         <div className="flex items-center gap-2 mb-5">
-          <Sliders className="w-5 h-5 text-brand-400" />
+          <Icons.Sliders className="w-5 h-5 text-brand-400" />
           <h2 className="text-base font-semibold text-white">改写控制台</h2>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {/* 人设风格选择 */}
           <div>
-            <label className="block text-xs text-dark-400 mb-2 font-medium">人设风格</label>
+            <label className="block text-xs text-dark-400 mb-2 font-medium">改写风格</label>
             <div className="relative">
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -322,27 +408,27 @@ export default function AIRewrite() {
               >
                 <span className="flex items-center gap-2">
                   <span className="w-6 h-6 rounded-lg bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center text-xs">
-                    {currentPersona?.name[0]}
+                    {currentStyle?.name[0]}
                   </span>
-                  <span>{currentPersona?.name}</span>
+                  <span>{currentStyle?.name}</span>
                 </span>
-                <ChevronDown className={`w-4 h-4 text-dark-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+                <Icons.ChevronDown className={`w-4 h-4 text-dark-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
               </button>
               {dropdownOpen && (
                 <div className="absolute z-20 top-full mt-1.5 w-full bg-dark-900 border border-white/10 rounded-xl py-1 shadow-2xl max-h-60 overflow-y-auto">
-                  {PERSONA_STYLES.map((p) => (
+                  {REWRITE_STYLES.map((s) => (
                     <button
-                      key={p.id}
-                      onClick={() => { setPersona(p.id); setDropdownOpen(false) }}
+                      key={s.id}
+                      onClick={() => { setStyleId(s.id); setDropdownOpen(false) }}
                       className={`w-full px-4 py-2.5 text-left hover:bg-white/5 transition-colors flex items-center justify-between ${
-                        persona === p.id ? 'bg-brand-500/10' : ''
+                        styleId === s.id ? 'bg-brand-500/10' : ''
                       }`}
                     >
                       <div>
-                        <div className="text-sm text-white">{p.name}</div>
-                        <div className="text-xs text-dark-500">{p.desc}</div>
+                        <div className="text-sm text-white">{s.name}</div>
+                        <div className="text-xs text-dark-500">{s.desc}</div>
                       </div>
-                      {persona === p.id && <Check className="w-4 h-4 text-brand-400" />}
+                      {styleId === s.id && <Icons.Check className="w-4 h-4 text-brand-400" />}
                     </button>
                   ))}
                 </div>
@@ -366,7 +452,7 @@ export default function AIRewrite() {
                 className="w-full"
               />
               <div className="flex justify-between mt-2">
-                {STRENGTH_OPTIONS.map((s, idx) => (
+                {STRENGTH_OPTIONS.map((s) => (
                   <button
                     key={s.id}
                     onClick={() => setStrength(s.id)}
@@ -404,31 +490,31 @@ export default function AIRewrite() {
         {/* 操作按钮 */}
         <div className="flex items-center justify-between mt-6 pt-5 border-t border-white/5">
           <div className="text-xs text-dark-400">
-            当前配置：<span className="text-dark-200">{currentPersona?.name}</span> · <span className="text-dark-200">{currentStrength?.name}</span>改写 · <span className="text-dark-200">{TONE_OPTIONS.find((t) => t.id === tone)?.name}</span>
+            当前配置：<span className="text-dark-200">{currentStyle?.name}</span> · <span className="text-dark-200">{currentStrength?.name}</span>改写 · <span className="text-dark-200">{currentTone?.name}</span>
           </div>
           <div className="flex items-center gap-3">
-            {result && (
+            {result && !rewriting && (
               <button
                 onClick={handleRewrite}
                 className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-dark-300 text-sm hover:text-white hover:bg-white/10 transition-all flex items-center gap-2"
               >
-                <RefreshCw className="w-4 h-4" />
+                <Icons.RefreshCw className="w-4 h-4" />
                 重新改写
               </button>
             )}
             <button
               onClick={handleRewrite}
-              disabled={rewriting}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-brand-500 to-accent-500 text-white text-sm font-semibold flex items-center gap-2 hover:shadow-lg hover:shadow-brand-500/30 transition-all disabled:opacity-50"
+              disabled={rewriting || !sourceText.trim()}
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-brand-500 to-accent-500 text-white text-sm font-semibold flex items-center gap-2 hover:shadow-lg hover:shadow-brand-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {rewriting ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Icons.Loader2 className="w-4 h-4 animate-spin" />
                   改写中...
                 </>
               ) : (
                 <>
-                  <Wand2 className="w-4 h-4" />
+                  <Icons.Wand2 className="w-4 h-4" />
                   一键AI改写
                 </>
               )}
@@ -438,17 +524,104 @@ export default function AIRewrite() {
       </div>
 
       {/* 下一步按钮 */}
-      {result && (
+      {result && !rewriting && (
         <div className="flex items-center justify-end">
           <button
-            onClick={handleNext}
+            onClick={() => navigate('/dashboard/voice')}
             className="px-6 py-3 rounded-xl bg-gradient-to-r from-brand-500 to-accent-500 text-white text-sm font-semibold flex items-center gap-2 hover:shadow-lg hover:shadow-brand-500/30 transition-all"
           >
             进入下一步：声音合成
-            <ArrowRight className="w-4 h-4" />
+            <Icons.ArrowRight className="w-4 h-4" />
           </button>
         </div>
       )}
+
+      {/* 历史记录（真实数据） */}
+      <div className="glass-card rounded-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Icons.History className="w-5 h-5 text-brand-400" />
+            <h2 className="text-base font-semibold text-white">改写历史</h2>
+          </div>
+          {history.length > 0 && <span className="text-xs text-dark-500">共 {history.length} 条</span>}
+        </div>
+
+        {history.length === 0 ? (
+          <div className="py-10 flex flex-col items-center justify-center text-center">
+            <div className="w-12 h-12 rounded-2xl bg-dark-800 flex items-center justify-center mb-3">
+              <Icons.FileText className="w-5 h-5 text-dark-500" />
+            </div>
+            <p className="text-sm text-dark-400 mb-1">暂无改写记录</p>
+            <p className="text-xs text-dark-500">生成结果后点击「保存文案」，即可在这里随时查看和复用</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {history.map((item) => {
+              const expanded = expandedId === item.id
+              return (
+                <div key={item.id} className="bg-dark-900/50 border border-white/5 rounded-xl p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      onClick={() => setExpandedId(expanded ? null : item.id)}
+                      className="flex-1 min-w-0 text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        {expanded ? (
+                          <Icons.ChevronUp className="w-4 h-4 text-dark-500 flex-shrink-0" />
+                        ) : (
+                          <Icons.ChevronDown className="w-4 h-4 text-dark-500 flex-shrink-0" />
+                        )}
+                        <span className="text-sm font-medium text-white truncate">{item.title || '改写文案'}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 ml-6 text-xs text-dark-500">
+                        <span>{timeAgo(item.createdAt)}</span>
+                        {item.source && (
+                          <>
+                            <span>·</span>
+                            <span>{item.source}</span>
+                          </>
+                        )}
+                      </div>
+                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => doCopy(`${item.title ? item.title + '\n\n' : ''}${item.content}${item.tags ? `\n\n${item.tags}` : ''}`, item.id)}
+                        className="p-2 rounded-lg bg-white/5 border border-white/10 text-dark-300 hover:text-white transition-all"
+                        title="复制"
+                      >
+                        {copiedKey === item.id ? <Icons.Check className="w-4 h-4 text-emerald-400" /> : <Icons.Copy className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => deleteScript(item.id)}
+                        className="p-2 rounded-lg bg-white/5 border border-white/10 text-dark-400 hover:text-rose-400 transition-all"
+                        title="删除"
+                      >
+                        <Icons.Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  {expanded && (
+                    <div className="mt-3 ml-6 space-y-3 animate-fade-in">
+                      <div className="bg-dark-950/60 rounded-xl p-4 border border-white/5 max-h-64 overflow-y-auto">
+                        <pre className="text-sm text-dark-300 whitespace-pre-wrap leading-relaxed font-sans">{item.content}</pre>
+                      </div>
+                      {item.tags && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {item.tags.split(/\s+/).filter(Boolean).map((tag, idx) => (
+                            <span key={idx} className="px-2.5 py-1 rounded-lg bg-brand-500/10 text-brand-300 text-xs border border-brand-500/20">
+                              {tag.startsWith('#') ? tag : `#${tag}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

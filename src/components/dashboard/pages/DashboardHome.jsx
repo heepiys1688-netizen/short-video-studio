@@ -1,73 +1,46 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as Icons from 'lucide-react'
-import { WORKFLOW_STEPS, PLATFORMS } from '../../../data/constants'
+import { WORKFLOW_STEPS } from '../../../data/constants'
+import { getStats, getTasks, on, timeAgo, formatSize } from '../../../services/store'
 
-// 数据概览
-const STATS_CARDS = [
-  { id: 'today', label: '今日产出', value: '12', unit: '条', icon: 'Video', color: 'from-brand-500 to-accent-500', trend: '+3' },
-  { id: 'week', label: '本周发布', value: '47', unit: '条', icon: 'Share2', color: 'from-emerald-500 to-teal-500', trend: '+15' },
-  { id: 'assets', label: '素材总量', value: '1,283', unit: '个', icon: 'FolderOpen', color: 'from-amber-500 to-orange-500', trend: '+86' },
-  { id: 'tasks', label: '任务进行中', value: '3', unit: '个', icon: 'ListChecks', color: 'from-rose-500 to-pink-500', trend: '实时' },
-]
-
-// 最近任务模拟数据
-const RECENT_TASKS = [
-  {
-    id: 1,
-    title: '夏季防晒种草口播 - 小红书',
-    status: 'completed',
-    statusText: '已完成',
-    progress: 100,
-    platform: 'xiaohongshu',
-    time: '2小时前',
-  },
-  {
-    id: 2,
-    title: '职场干货分享系列 - 第3集',
-    status: 'processing',
-    statusText: '合成中',
-    progress: 65,
-    platform: 'douyin',
-    time: '15分钟前',
-  },
-  {
-    id: 3,
-    title: '美食探店Vlog混剪 - 视频号',
-    status: 'processing',
-    statusText: '配音中',
-    progress: 40,
-    platform: 'shipinhao',
-    time: '32分钟前',
-  },
-  {
-    id: 4,
-    title: '知识科普短视频 - 快手矩阵',
-    status: 'pending',
-    statusText: '排队中',
-    progress: 0,
-    platform: 'kuaishou',
-    time: '1小时前',
-  },
-]
-
-const STATUS_STYLES = {
-  completed: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  processing: 'bg-brand-500/10 text-brand-400 border-brand-500/20',
-  pending: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+// 任务状态徽章映射
+const STATUS_MAP = {
+  processing: { text: '进行中', style: 'bg-brand-500/10 text-brand-400 border-brand-500/20' },
+  completed: { text: '已完成', style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
+  failed: { text: '失败', style: 'bg-red-500/10 text-red-400 border-red-500/20' },
 }
 
-// 平台今日发布数模拟数据
-const PLATFORM_STATS = [
-  { id: 'douyin', today: 18, week: 52 },
-  { id: 'xiaohongshu', today: 12, week: 38 },
-  { id: 'shipinhao', today: 9, week: 25 },
-  { id: 'kuaishou', today: 8, week: 20 },
-]
+// 作品分布配置
+const WORK_TYPE_META = {
+  video: { name: '视频', icon: 'Video', bar: 'from-brand-500 to-accent-500', text: 'text-brand-400' },
+  image: { name: '图片', icon: 'Image', bar: 'from-emerald-500 to-teal-500', text: 'text-emerald-400' },
+  audio: { name: '音频', icon: 'AudioLines', bar: 'from-amber-500 to-orange-500', text: 'text-amber-400' },
+}
 
 export default function DashboardHome() {
   const navigate = useNavigate()
   const [activeStep, setActiveStep] = useState(null)
+  const [stats, setStats] = useState(null)
+  const [recentTasks, setRecentTasks] = useState([])
+
+  // 加载真实数据
+  const refresh = useCallback(async () => {
+    try {
+      const s = await getStats()
+      setStats(s)
+    } catch { /* 忽略统计读取失败 */ }
+    setRecentTasks(getTasks().slice(0, 5))
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    // 订阅任务与作品变化，实时刷新
+    const offTasks = on('tasks', refresh)
+    const offWorks = on('works', refresh)
+    const offAssets = on('assets', refresh)
+    return () => { offTasks(); offWorks(); offAssets() }
+  }, [refresh])
 
   const handleStepClick = (step) => {
     setActiveStep(step.step)
@@ -84,7 +57,50 @@ export default function DashboardHome() {
     }
   }
 
-  const getPlatform = (id) => PLATFORMS.find((p) => p.id === id)
+  // 数据概览卡片（全部来自真实统计）
+  const statsCards = [
+    {
+      id: 'today',
+      label: '今日产出',
+      value: stats?.todayWorks ?? 0,
+      unit: '条',
+      icon: 'Video',
+      color: 'from-brand-500 to-accent-500',
+      trend: stats ? `累计作品 ${stats.totalWorks} 条` : '读取中',
+    },
+    {
+      id: 'week',
+      label: '本周产出',
+      value: stats?.weekWorks ?? 0,
+      unit: '条',
+      icon: 'TrendingUp',
+      color: 'from-emerald-500 to-teal-500',
+      trend: '近 7 天生成',
+    },
+    {
+      id: 'assets',
+      label: '素材总量',
+      value: stats?.totalAssets ?? 0,
+      unit: '个',
+      icon: 'FolderOpen',
+      color: 'from-amber-500 to-orange-500',
+      trend: stats ? `存储 ${formatSize(stats.storageUsed)}` : '读取中',
+    },
+    {
+      id: 'tasks',
+      label: '任务进行中',
+      value: stats?.runningTasks ?? 0,
+      unit: '个',
+      icon: 'ListChecks',
+      color: 'from-rose-500 to-pink-500',
+      trend: stats ? `累计任务 ${stats.totalTasks} 个` : '实时',
+    },
+  ]
+
+  const worksTotal = stats ? stats.worksByType.video + stats.worksByType.image + stats.worksByType.audio : 0
+  const storagePercent = stats && stats.storageQuota > 0
+    ? Math.min(100, (stats.storageUsed / stats.storageQuota) * 100)
+    : 0
 
   return (
     <div className="space-y-6">
@@ -123,9 +139,9 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 数据概览卡片 */}
+      {/* 数据概览卡片（真实统计） */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {STATS_CARDS.map((stat) => {
+        {statsCards.map((stat) => {
           const Icon = Icons[stat.icon] || Icons.Circle
           return (
             <div
@@ -182,9 +198,9 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 最近任务 + 平台状态 */}
+      {/* 最近任务 + 作品分布 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 最近任务列表 */}
+        {/* 最近任务列表（真实数据） */}
         <div className="lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold text-white">最近任务</h2>
@@ -197,81 +213,127 @@ export default function DashboardHome() {
             </button>
           </div>
           <div className="glass-card rounded-2xl overflow-hidden">
-            {RECENT_TASKS.map((task, idx) => {
-              const platform = getPlatform(task.platform)
+            {recentTasks.length > 0 ? recentTasks.map((task, idx) => {
+              const status = STATUS_MAP[task.status] || STATUS_MAP.processing
               return (
                 <div
                   key={task.id}
                   className={`flex items-center gap-4 p-4 hover:bg-white/5 transition-colors ${
-                    idx !== RECENT_TASKS.length - 1 ? 'border-b border-white/5' : ''
+                    idx !== recentTasks.length - 1 ? 'border-b border-white/5' : ''
                   }`}
                 >
-                  <div className="w-10 h-10 rounded-lg bg-dark-800 flex items-center justify-center text-lg flex-shrink-0">
-                    {platform?.icon}
+                  <div className="w-10 h-10 rounded-lg bg-dark-800 flex items-center justify-center flex-shrink-0">
+                    <Icons.ListChecks className="w-4 h-4 text-dark-400" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-sm font-medium text-white truncate">{task.title}</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-dark-400">{task.time}</span>
-                      <span className="text-xs text-dark-500">{platform?.name}</span>
+                      <span className="text-xs text-dark-400">{timeAgo(task.createdAt)}</span>
+                      <span className="text-xs text-dark-500">
+                        {task.type}{task.module ? ` · ${task.module}` : ''}
+                      </span>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                    <span className={`px-2 py-0.5 rounded-md text-xs font-medium border ${STATUS_STYLES[task.status]}`}>
-                      {task.statusText}
+                    <span className={`px-2 py-0.5 rounded-md text-xs font-medium border ${status.style}`}>
+                      {status.text}
                     </span>
-                    {task.progress > 0 && (
+                    {task.status === 'processing' && (
                       <div className="w-20 h-1 rounded-full bg-dark-800 overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-brand-500 to-accent-500 rounded-full transition-all"
-                          style={{ width: `${task.progress}%` }}
+                          style={{ width: `${task.progress || 0}%` }}
                         />
                       </div>
                     )}
                   </div>
                 </div>
               )
-            })}
+            }) : (
+              /* 空状态 */
+              <div className="p-12 flex flex-col items-center justify-center text-center">
+                <div className="w-14 h-14 rounded-2xl bg-dark-800 flex items-center justify-center mb-3">
+                  <Icons.Inbox className="w-6 h-6 text-dark-500" />
+                </div>
+                <p className="text-sm text-dark-400 mb-1">暂无任务记录</p>
+                <p className="text-xs text-dark-500 mb-4">从文案提取或文生视频开始，创建你的第一个创作任务</p>
+                <button
+                  onClick={() => navigate('/dashboard/text-to-video')}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-500 to-accent-500 text-white text-xs font-semibold flex items-center gap-1.5 hover:shadow-lg hover:shadow-brand-500/30 transition-all"
+                >
+                  <Icons.Type className="w-3.5 h-3.5" />
+                  去文生视频
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* 平台状态概览 */}
+        {/* 作品分布 + 存储用量（真实数据） */}
         <div>
-          <h2 className="text-lg font-bold text-white mb-4">平台状态</h2>
+          <h2 className="text-lg font-bold text-white mb-4">作品分布</h2>
           <div className="glass-card rounded-2xl p-5 space-y-4">
-            {PLATFORM_STATS.map((ps) => {
-              const platform = getPlatform(ps.id)
-              const maxWeek = Math.max(...PLATFORM_STATS.map((p) => p.week))
-              const barWidth = (ps.week / maxWeek) * 100
-              return (
-                <div key={ps.id}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">{platform?.icon}</span>
-                      <span className="text-sm text-white">{platform?.name}</span>
+            {worksTotal > 0 ? (
+              Object.entries(WORK_TYPE_META).map(([type, meta]) => {
+                const count = stats?.worksByType?.[type] || 0
+                const percent = worksTotal > 0 ? (count / worksTotal) * 100 : 0
+                const Icon = Icons[meta.icon] || Icons.Circle
+                return (
+                  <div key={type}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Icon className={`w-4 h-4 ${meta.text}`} />
+                        <span className="text-sm text-white">{meta.name}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-bold text-white">{count}</span>
+                        <span className="text-xs text-dark-400 ml-1">条</span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className="text-sm font-bold text-white">{ps.today}</span>
-                      <span className="text-xs text-dark-400 ml-1">今日</span>
+                    <div className="w-full h-1.5 rounded-full bg-dark-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full bg-gradient-to-r ${meta.bar} transition-all`}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-xs text-dark-500">占比 {percent.toFixed(0)}%</span>
                     </div>
                   </div>
-                  <div className="w-full h-1.5 rounded-full bg-dark-800 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${barWidth}%`,
-                        background: `linear-gradient(90deg, ${platform?.color}88, ${platform?.color})`,
-                      }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between mt-1.5">
-                    <span className="text-xs text-dark-500">本周 {ps.week} 条</span>
-                  </div>
+                )
+              })
+            ) : (
+              <div className="py-6 flex flex-col items-center justify-center text-center">
+                <div className="w-12 h-12 rounded-xl bg-dark-800 flex items-center justify-center mb-3">
+                  <Icons.PieChart className="w-5 h-5 text-dark-500" />
                 </div>
-              )
-            })}
+                <p className="text-xs text-dark-400 mb-1">还没有生成任何作品</p>
+                <p className="text-xs text-dark-500">生成视频 / 图片 / 音频后这里会展示分布</p>
+              </div>
+            )}
+
+            {/* 存储用量 */}
+            <div className="pt-3 border-t border-white/5">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Icons.HardDrive className="w-4 h-4 text-dark-400" />
+                  <span className="text-sm text-white">存储用量</span>
+                </div>
+                <span className="text-xs text-dark-400">
+                  {formatSize(stats?.storageUsed || 0)}
+                  {stats?.storageQuota ? ` / ${formatSize(stats.storageQuota)}` : ''}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-dark-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-brand-500 to-accent-500 transition-all"
+                  style={{ width: `${storagePercent}%` }}
+                />
+              </div>
+              <p className="text-xs text-dark-500 mt-1.5">浏览器本地存储（IndexedDB）</p>
+            </div>
           </div>
         </div>
       </div>

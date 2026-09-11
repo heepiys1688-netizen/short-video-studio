@@ -1,2 +1,10 @@
 node_modules/
-dist/
+.vercel/
+.netlify/
+.env
+.env.*
+*.local
+.DS_Store
+*.log
+时光记工作台_*.zip
+data/

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as Icons from 'lucide-react'
+import { generateImageToVideo, generateLocalVideo, downloadVideo, hasApiKey, getApiKey, setApiKey } from '../../../services/videoApi'
+import { saveWork, getWorks, deleteWork, createTask, updateTask, on, timeAgo } from '../../../services/store'
 
 const MOTION_EFFECTS = [
   { id: 'slow-zoom', name: '缓慢缩放', desc: '镜头缓慢推近或拉远', icon: 'ZoomIn' },
@@ -21,12 +23,6 @@ const RESOLUTIONS = [
 
 const DURATIONS = [5, 10, 15, 20, 25, 30]
 
-const MOCK_HISTORY = [
-  { id: 1, imageName: 'product_shot_01.jpg', effect: '缓慢缩放', duration: 10, resolution: '1080p', status: 'completed', createdAt: '1小时前', thumbnail: 'bg-gradient-to-br from-emerald-400 to-teal-600' },
-  { id: 2, imageName: 'city_night.jpg', effect: '视差深度', duration: 15, resolution: '1080p', status: 'completed', createdAt: '3小时前', thumbnail: 'bg-gradient-to-br from-indigo-500 to-purple-700' },
-  { id: 3, imageName: 'portrait_02.png', effect: '3D环绕', duration: 8, resolution: '1080p', status: 'processing', createdAt: '10分钟前', thumbnail: 'bg-gradient-to-br from-rose-400 to-pink-600' },
-]
-
 export default function ImageToVideo() {
   const navigate = useNavigate()
   const [uploadedImage, setUploadedImage] = useState(null)
@@ -39,12 +35,41 @@ export default function ImageToVideo() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
   const [generatedVideo, setGeneratedVideo] = useState(null)
-  const [history, setHistory] = useState(MOCK_HISTORY)
+  const [history, setHistory] = useState([])
   const [activeTab, setActiveTab] = useState('create')
   const [isPlaying, setIsPlaying] = useState(false)
   const videoRef = useRef(null)
   const fileInputRef = useRef(null)
   const progressRef = useRef(null)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const [apiKeyInput, setApiKeyInput] = useState(getApiKey())
+  const [notice, setNotice] = useState('')
+
+  // AI 请求期间进度条动画（真实请求，非假进度）
+  const simulateProgress = () => {
+    if (progressRef.current) clearInterval(progressRef.current)
+    progressRef.current = setInterval(() => {
+      setProgress(p => {
+        if (p >= 92) return p
+        return p + (p < 30 ? 2.5 : p < 60 ? 1.2 : p < 80 ? 0.5 : 0.15)
+      })
+    }, 400)
+  }
+  const stopSimulate = () => {
+    if (progressRef.current) { clearInterval(progressRef.current); progressRef.current = null }
+  }
+
+  // 加载真实生成历史
+  const loadHistory = async () => {
+    try {
+      const works = await getWorks('video')
+      setHistory(works.filter((w) => w.meta?.module === 'image-to-video'))
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => { loadHistory() }, [])
+
+  useEffect(() => on('works', loadHistory), [])
 
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0]
@@ -71,196 +96,119 @@ export default function ImageToVideo() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!uploadedImage) return
     setIsGenerating(true)
     setProgress(0)
     setGeneratedVideo(null)
     setIsPlaying(false)
+    setNotice('')
 
-    let p = 0
-    progressRef.current = setInterval(() => {
-      p += Math.random() * 6 + 2
-      if (p >= 100) {
-        p = 100
-        clearInterval(progressRef.current)
-        setTimeout(() => {
-          setIsGenerating(false)
-          const effectObj = MOTION_EFFECTS.find(e => e.id === selectedEffect)
-          const newVideo = {
-            id: Date.now(),
-            imageName,
-            effect: effectObj?.name || '缓慢缩放',
-            duration,
-            resolution,
-            status: 'completed',
-            createdAt: '刚刚',
-            thumbnail: uploadedImage,
-          }
-          // 异步生成模拟视频
-          createMockVideoBlob().then(videoUrl => {
-            const videoWithUrl = { ...newVideo, videoUrl }
-            setGeneratedVideo(videoWithUrl)
-            setHistory(prev => [videoWithUrl, ...prev])
-          }).catch(() => {
-            setGeneratedVideo(newVideo)
-            setHistory(prev => [newVideo, ...prev])
-          })
-        }, 500)
+    const effectObj = MOTION_EFFECTS.find(e => e.id === selectedEffect)
+
+    // 登记真实任务
+    const task = createTask({ title: `图生视频 · ${effectObj?.name || ''}`, type: '图生视频', module: 'image-to-video' })
+    const reportProgress = (p) => {
+      setProgress(p)
+      updateTask(task.id, { progress: p })
+    }
+
+    let result = null
+
+    // 优先真实 AI（已配置 Pollinations Key）
+    if (hasApiKey()) {
+      simulateProgress()
+      try {
+        result = await generateImageToVideo({
+          image: uploadedImage,
+          prompt: effectObj?.desc || effectObj?.name || '',
+          duration,
+          resolution,
+          motionIntensity,
+        })
+      } catch (err) {
+        console.warn('AI 生成失败，自动切换本地渲染:', err)
+        setNotice(`AI 生成失败（${err.message}），已自动切换为本地渲染`)
       }
-      setProgress(Math.min(p, 100))
-    }, 350)
+      stopSimulate()
+    }
+
+    // 本地渲染保底（对上传图片施加所选动效，必定出片）
+    if (!result) {
+      setProgress(0)
+      try {
+        result = await generateLocalVideo({
+          mode: 'image',
+          image: uploadedImage,
+          effect: selectedEffect,
+          intensity: motionIntensity,
+          duration,
+          resolution,
+          onProgress: reportProgress,
+        })
+      } catch (err) {
+        console.error('生成失败:', err)
+        updateTask(task.id, { status: 'failed', error: err.message, finishedAt: Date.now() })
+        setIsGenerating(false)
+        alert(`视频生成失败: ${err.message}`)
+        return
+      }
+    }
+
+    // 持久化到作品库
+    let newVideo
+    try {
+      const work = await saveWork({
+        type: 'video',
+        name: `图生视频_${Date.now()}`,
+        blob: result.blob,
+        meta: {
+          module: 'image-to-video',
+          imageName,
+          effect: effectObj?.name || '缓慢缩放',
+          duration: result.duration || duration,
+          resolution,
+          engine: result.engine,
+          model: result.model,
+          ext: result.ext || 'mp4',
+        },
+      })
+      newVideo = {
+        id: work.id,
+        imageName,
+        effect: effectObj?.name || '缓慢缩放',
+        duration: result.duration || duration,
+        resolution,
+        engine: result.engine,
+        model: result.model,
+        ext: result.ext || 'mp4',
+        videoUrl: work.url,
+      }
+      updateTask(task.id, { status: 'completed', progress: 100, workId: work.id, finishedAt: Date.now() })
+    } catch (err) {
+      console.error('保存作品失败:', err)
+      updateTask(task.id, { status: 'failed', error: `生成成功但保存失败: ${err.message}`, finishedAt: Date.now() })
+      newVideo = {
+        id: Date.now(),
+        imageName,
+        effect: effectObj?.name || '缓慢缩放',
+        duration: result.duration || duration,
+        resolution,
+        engine: result.engine,
+        model: result.model,
+        ext: result.ext || 'mp4',
+        videoUrl: result.videoUrl,
+      }
+    }
+
+    setProgress(100)
+    setGeneratedVideo(newVideo)
+    setIsGenerating(false)
   }
 
-  // 生成模拟视频Blob（用于演示）
-  const createMockVideoBlob = () => {
-    try {
-      const canvas = document.createElement('canvas')
-      canvas.width = 640
-      canvas.height = 360
-      const ctx = canvas.getContext('2d')
-
-      const img = new Image()
-      img.src = uploadedImage
-
-      const effectObj = MOTION_EFFECTS.find(e => e.id === selectedEffect)
-      const fps = 10
-      const totalFrames = Math.min(duration * fps, 150)
-
-      return new Promise((resolve) => {
-        img.onload = () => {
-          const recordCanvas = document.createElement('canvas')
-          recordCanvas.width = 640
-          recordCanvas.height = 360
-          const recordCtx = recordCanvas.getContext('2d')
-          const recordStream = recordCanvas.captureStream(10)
-          const recordRecorder = new MediaRecorder(recordStream, { mimeType: 'video/webm;codecs=vp9' })
-
-          const recordChunks = []
-          recordRecorder.ondataavailable = (e) => recordChunks.push(e.data)
-          recordRecorder.onstop = () => {
-            const blob = new Blob(recordChunks, { type: 'video/webm' })
-            resolve(URL.createObjectURL(blob))
-          }
-
-          recordRecorder.start()
-
-          let frameIdx = 0
-          const drawFrame = () => {
-            if (frameIdx >= totalFrames) {
-              recordRecorder.stop()
-              return
-            }
-
-            recordCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height)
-
-            // 根据效果类型绘制不同动画
-            const intensity = motionIntensity / 100
-            const cx = recordCanvas.width / 2
-            const cy = recordCanvas.height / 2
-
-            if (selectedEffect === 'slow-zoom') {
-              const scale = 1 + Math.sin(frameIdx * 0.05) * 0.3 * intensity
-              recordCtx.save()
-              recordCtx.translate(cx, cy)
-              recordCtx.scale(scale, scale)
-              recordCtx.translate(-cx, -cy)
-              recordCtx.drawImage(img, 0, 0, recordCanvas.width, recordCanvas.height)
-              recordCtx.restore()
-            } else if (selectedEffect === 'pan') {
-              const offset = Math.sin(frameIdx * 0.03) * 50 * intensity
-              recordCtx.save()
-              recordCtx.translate(offset, 0)
-              recordCtx.drawImage(img, -50, 0, recordCanvas.width + 100, recordCanvas.height)
-              recordCtx.restore()
-            } else if (selectedEffect === 'orbit') {
-              const angle = frameIdx * 0.02
-              const scale = 1.2
-              recordCtx.save()
-              recordCtx.translate(cx, cy)
-              recordCtx.rotate(angle * 0.1)
-              recordCtx.scale(scale, scale)
-              recordCtx.translate(-cx, -cy)
-              recordCtx.drawImage(img, 0, 0, recordCanvas.width, recordCanvas.height)
-              recordCtx.restore()
-            } else if (selectedEffect === 'parallax') {
-              recordCtx.drawImage(img, 0, 0, recordCanvas.width, recordCanvas.height)
-              const offset = Math.sin(frameIdx * 0.04) * 20 * intensity
-              recordCtx.fillStyle = 'rgba(0,0,0,0.2)'
-              recordCtx.fillRect(offset, 0, 10, recordCanvas.height)
-            } else {
-              // 默认：呼吸律动
-              const scale = 1 + Math.sin(frameIdx * 0.08) * 0.05 * intensity
-              recordCtx.save()
-              recordCtx.translate(cx, cy)
-              recordCtx.scale(scale, scale)
-              recordCtx.translate(-cx, -cy)
-              recordCtx.drawImage(img, 0, 0, recordCanvas.width, recordCanvas.height)
-              recordCtx.restore()
-            }
-
-            // 添加效果文字
-            recordCtx.fillStyle = 'rgba(255,255,255,0.9)'
-            recordCtx.font = 'bold 20px sans-serif'
-            recordCtx.textAlign = 'center'
-            recordCtx.fillText(`${effectObj?.name || '缓慢缩放'}`, cx, recordCanvas.height - 40)
-            recordCtx.font = '14px sans-serif'
-            recordCtx.fillText(`${duration}s · ${resolution}`, cx, recordCanvas.height - 15)
-
-            frameIdx++
-            setTimeout(drawFrame, 1000 / fps)
-          }
-          drawFrame()
-        }
-
-        img.onerror = () => {
-          // 图片加载失败时生成纯色动画
-          const recordCanvas = document.createElement('canvas')
-          recordCanvas.width = 640
-          recordCanvas.height = 360
-          const recordCtx = recordCanvas.getContext('2d')
-          const recordStream = recordCanvas.captureStream(10)
-          const recordRecorder = new MediaRecorder(recordStream, { mimeType: 'video/webm;codecs=vp9' })
-
-          const recordChunks = []
-          recordRecorder.ondataavailable = (e) => recordChunks.push(e.data)
-          recordRecorder.onstop = () => {
-            const blob = new Blob(recordChunks, { type: 'video/webm' })
-            resolve(URL.createObjectURL(blob))
-          }
-
-          recordRecorder.start()
-
-          let frameIdx = 0
-          const drawFrame = () => {
-            if (frameIdx >= totalFrames) {
-              recordRecorder.stop()
-              return
-            }
-            const hue = (frameIdx * 2 + 200) % 360
-            const g = recordCtx.createLinearGradient(0, 0, recordCanvas.width, recordCanvas.height)
-            g.addColorStop(0, `hsl(${hue}, 60%, 50%)`)
-            g.addColorStop(1, `hsl(${hue + 40}, 60%, 40%)`)
-            recordCtx.fillStyle = g
-            recordCtx.fillRect(0, 0, recordCanvas.width, recordCanvas.height)
-
-            recordCtx.fillStyle = 'rgba(255,255,255,0.9)'
-            recordCtx.font = 'bold 20px sans-serif'
-            recordCtx.textAlign = 'center'
-            recordCtx.fillText(effectObj?.name || '图生视频', recordCanvas.width / 2, recordCanvas.height / 2)
-            recordCtx.font = '14px sans-serif'
-            recordCtx.fillText(`${duration}s · ${resolution}`, recordCanvas.width / 2, recordCanvas.height - 30)
-
-            frameIdx++
-            setTimeout(drawFrame, 1000 / fps)
-          }
-          drawFrame()
-        }
-      })
-    } catch (err) {
-      console.warn('无法生成模拟视频:', err)
-      return null
-    }
+  const saveApiKey = () => {
+    setApiKey(apiKeyInput.trim())
+    setShowApiKeyModal(false)
   }
 
   useEffect(() => {
@@ -492,27 +440,60 @@ export default function ImageToVideo() {
             </div>
 
             {/* 生成按钮 */}
-            <button
-              onClick={handleGenerate}
-              disabled={!uploadedImage || isGenerating}
-              className={`w-full py-4 rounded-xl text-white font-semibold text-base flex items-center justify-center gap-2 transition-all ${
-                !uploadedImage || isGenerating
-                  ? 'bg-dark-700 cursor-not-allowed opacity-50'
-                  : 'bg-gradient-to-r from-brand-600 to-accent-600 hover:shadow-lg hover:shadow-brand-500/30 glow-hover'
-              }`}
-            >
-              {isGenerating ? (
-                <>
-                  <Icons.Loader2 className="w-5 h-5 animate-spin" />
-                  生成中... {Math.round(progress)}%
-                </>
-              ) : (
-                <>
-                  <Icons.Wand2 className="w-5 h-5" />
-                  生成视频
-                </>
+            <div className="space-y-3">
+              <button
+                onClick={handleGenerate}
+                disabled={!uploadedImage || isGenerating}
+                className={`w-full py-4 rounded-xl text-white font-semibold text-base flex items-center justify-center gap-2 transition-all ${
+                  !uploadedImage || isGenerating
+                    ? 'bg-dark-700 cursor-not-allowed opacity-50'
+                    : 'bg-gradient-to-r from-brand-600 to-accent-600 hover:shadow-lg hover:shadow-brand-500/30 glow-hover'
+                }`}
+              >
+                {isGenerating ? (
+                  <>
+                    <Icons.Loader2 className="w-5 h-5 animate-spin" />
+                    {hasApiKey() ? 'AI 生成中（约 1-3 分钟）...' : '本地渲染中（实时录制）...'} {Math.round(progress)}%
+                  </>
+                ) : (
+                  <>
+                    <Icons.Wand2 className="w-5 h-5" />
+                    {hasApiKey() ? 'AI 生成视频' : '本地渲染生成视频'}
+                  </>
+                )}
+              </button>
+
+              {/* API Key 状态 */}
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5">
+                  {hasApiKey() ? (
+                    <>
+                      <Icons.CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400">已接入 Pollinations 真实 AI（Seedance / Wan / Veo），失败自动降级本地渲染</span>
+                    </>
+                  ) : (
+                    <>
+                      <Icons.AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-amber-400">未配置 Key：当前为本地渲染（免费无限出片）；配置 Pollinations Key 解锁真实 AI</span>
+                    </>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowApiKeyModal(true)}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {hasApiKey() ? '更换 API Key' : '配置 API Key'}
+                </button>
+              </div>
+
+              {/* 降级提示 */}
+              {notice && (
+                <div className="flex items-start gap-2 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-xl px-4 py-3">
+                  <Icons.AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{notice}</span>
+                </div>
               )}
-            </button>
+            </div>
 
             {/* 生成进度 */}
             {isGenerating && (
@@ -581,10 +562,16 @@ export default function ImageToVideo() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="px-2 py-1 rounded-md bg-brand-500/10 text-brand-300 text-xs border border-brand-500/20">{generatedVideo.effect}</span>
                       <span className="px-2 py-1 rounded-md bg-dark-800 text-dark-300 text-xs border border-white/5">幅度 {motionIntensity}%</span>
+                      <span className={`px-2 py-1 rounded-md text-xs border ${generatedVideo.engine === 'api' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' : 'bg-amber-500/10 text-amber-300 border-amber-500/20'}`}>
+                        {generatedVideo.engine === 'api' ? `真实 AI · ${generatedVideo.model}` : '本地渲染'}
+                      </span>
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 text-white text-sm font-medium flex items-center justify-center gap-1.5 hover:shadow-lg transition-all">
+                    <button
+                      onClick={() => generatedVideo.videoUrl && downloadVideo(generatedVideo.videoUrl, `img2video_${generatedVideo.id}`, generatedVideo.ext)}
+                      className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 text-white text-sm font-medium flex items-center justify-center gap-1.5 hover:shadow-lg transition-all"
+                    >
                       <Icons.Download className="w-4 h-4" />
                       下载视频
                     </button>
@@ -619,54 +606,57 @@ export default function ImageToVideo() {
           {history.length === 0 ? (
             <div className="text-center py-12">
               <Icons.Clock className="w-12 h-12 text-dark-600 mx-auto mb-3" />
-              <p className="text-dark-500">暂无生成记录</p>
+              <p className="text-dark-500">暂无生成记录，去「创作」页上传图片生成第一个视频吧</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {history.map(item => (
                 <div key={item.id} className="bg-dark-800/30 border border-white/5 rounded-xl overflow-hidden hover:border-white/10 transition-all group">
-                  <div className={`aspect-video relative ${typeof item.thumbnail === 'string' && item.thumbnail.startsWith('data:') ? '' : item.thumbnail || 'bg-gradient-to-br from-brand-500 to-accent-500'}`}>
-                    {typeof item.thumbnail === 'string' && item.thumbnail.startsWith('data:') ? (
-                      <img src={item.thumbnail} alt="" className="w-full h-full object-cover" />
+                  <div className="aspect-video bg-black relative">
+                    {item.url ? (
+                      <video src={item.url} muted playsInline preload="metadata" className="w-full h-full object-cover" />
                     ) : (
-                      <div className={`w-full h-full ${item.thumbnail || 'bg-gradient-to-br from-brand-500 to-accent-500'}`} />
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Icons.Clapperboard className="w-8 h-8 text-dark-600" />
+                      </div>
                     )}
-                    <div className="absolute inset-0 bg-black/20" />
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30">
                       <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
                         <Icons.Play className="w-5 h-5 text-white ml-0.5" />
                       </div>
                     </div>
-                    <div className="absolute top-2 right-2">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                        item.status === 'completed'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : item.status === 'failed'
-                          ? 'bg-red-500/20 text-red-300'
-                          : 'bg-blue-500/20 text-blue-300'
-                      }`}>
-                        {item.status === 'completed' ? '已完成' : item.status === 'failed' ? '失败' : '生成中'}
+                    <div className="absolute top-2 left-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${item.meta?.engine === 'api' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                        {item.meta?.engine === 'api' ? `真实AI${item.meta?.model ? ' · ' + item.meta.model : ''}` : '本地渲染'}
                       </span>
                     </div>
                     <div className="absolute bottom-2 left-2 flex gap-1">
-                      <span className="text-white text-[10px] bg-black/40 backdrop-blur px-1.5 py-0.5 rounded">{item.duration}s</span>
-                      <span className="text-white text-[10px] bg-black/40 backdrop-blur px-1.5 py-0.5 rounded">{item.resolution}</span>
+                      <span className="text-white text-[10px] bg-black/40 backdrop-blur px-1.5 py-0.5 rounded">{item.meta?.duration || '?'}s</span>
+                      <span className="text-white text-[10px] bg-black/40 backdrop-blur px-1.5 py-0.5 rounded">{item.meta?.resolution || ''}</span>
                     </div>
                   </div>
                   <div className="p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Icons.FileImage className="w-3.5 h-3.5 text-dark-500" />
-                      <span className="text-dark-300 text-xs truncate">{item.imageName || 'uploaded_image.jpg'}</span>
+                      <span className="text-dark-300 text-xs truncate">{item.meta?.imageName || 'uploaded_image'}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="px-2 py-1 rounded-md bg-brand-500/10 text-brand-300 text-xs border border-brand-500/20">{item.effect}</span>
-                      <span className="text-dark-500 text-xs">{item.createdAt}</span>
+                      <span className="px-2 py-1 rounded-md bg-brand-500/10 text-brand-300 text-xs border border-brand-500/20">{item.meta?.effect || '动效'}</span>
+                      <span className="text-dark-500 text-xs">{timeAgo(item.createdAt)}</span>
                     </div>
                     <div className="flex gap-1 mt-2 justify-end">
-                      <button className="p-1.5 rounded-lg hover:bg-white/5 text-dark-400 hover:text-white transition-colors">
+                      <button
+                        onClick={() => item.url && downloadVideo(item.url, `img2video_${item.id}`, item.meta?.ext || 'mp4')}
+                        className="p-1.5 rounded-lg hover:bg-white/5 text-dark-400 hover:text-white transition-colors"
+                        title="下载"
+                      >
                         <Icons.Download className="w-3.5 h-3.5" />
                       </button>
-                      <button className="p-1.5 rounded-lg hover:bg-white/5 text-dark-400 hover:text-white transition-colors">
+                      <button
+                        onClick={async () => { await deleteWork(item.id) }}
+                        className="p-1.5 rounded-lg hover:bg-white/5 text-dark-400 hover:text-red-400 transition-colors"
+                        title="删除"
+                      >
                         <Icons.Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -675,6 +665,68 @@ export default function ImageToVideo() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* API Key 配置弹窗 */}
+      {showApiKeyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="glass-card rounded-2xl p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">配置视频生成 API Key</h3>
+              <button
+                onClick={() => setShowApiKeyModal(false)}
+                className="p-1.5 rounded-lg hover:bg-white/5 text-dark-400 hover:text-white transition-colors"
+              >
+                <Icons.X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-2">
+                  Pollinations API Key（免费）
+                </label>
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={e => setApiKeyInput(e.target.value)}
+                  placeholder="pk_xxxxxxxxxxxxxxxx"
+                  className="w-full bg-dark-800/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-dark-500 focus:outline-none focus:border-brand-500/50 transition-all"
+                />
+                <p className="text-dark-500 text-xs mt-2">
+                  在 <a href="https://enter.pollinations.ai" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">enter.pollinations.ai</a> 用 GitHub 一键登录，创建 <span className="text-dark-300">Publishable Key（pk_ 开头）</span>即可免费生成真实 AI 视频。留空则使用本地渲染。
+                </p>
+              </div>
+
+              <div className="bg-dark-800/50 rounded-xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm text-dark-300">
+                  <Icons.Info className="w-4 h-4 text-brand-400" />
+                  <span className="font-medium">生成引擎说明</span>
+                </div>
+                <div className="text-xs text-dark-400 space-y-1">
+                  <p>• <span className="text-emerald-300">真实 AI（配置 Key 后启用）</span>：以上传图片为首帧，Seedance / Wan / Veo 模型生成 1080p MP4</p>
+                  <p>• <span className="text-amber-300">本地渲染（默认，无需 Key）</span>：对图片施加所选电影级动效并录制成片，免费无限次</p>
+                  <p>• AI 生成失败时会自动降级为本地渲染，不会中断使用</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowApiKeyModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-white/10 text-dark-300 hover:text-white hover:bg-white/5 transition-all"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={saveApiKey}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-accent-600 text-white font-medium hover:shadow-lg hover:shadow-brand-500/30 transition-all"
+                >
+                  保存配置
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

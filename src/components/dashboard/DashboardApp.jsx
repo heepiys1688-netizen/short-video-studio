@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import * as Icons from 'lucide-react'
 import { SIDEBAR_ITEMS } from '../../data/constants'
+import { getTasks, on, timeAgo } from '../../services/store'
 
 // 导入页面组件
 import DashboardHome from './pages/DashboardHome'
@@ -111,11 +112,29 @@ function Sidebar() {
   )
 }
 
+// 通知图标状态映射
+const NOTIF_STATUS = {
+  processing: { icon: 'Clock', color: 'text-amber-400' },
+  completed: { icon: 'CheckCircle2', color: 'text-emerald-400' },
+  failed: { icon: 'XCircle', color: 'text-red-400' },
+}
+
 function TopBar() {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchValue, setSearchValue] = useState('')
   const [showNotifications, setShowNotifications] = useState(false)
+  const [notifTasks, setNotifTasks] = useState([])
+
+  // 加载真实任务通知，订阅任务变化实时刷新
+  useEffect(() => {
+    const refresh = () => setNotifTasks(getTasks().slice(0, 5))
+    refresh()
+    const off = on('tasks', refresh)
+    return off
+  }, [])
+
+  const hasRunning = notifTasks.some((t) => t.status === 'processing')
 
   const currentPath = location.pathname
   const breadcrumbs = BREADCRUMB_MAP[currentPath] || ['工作台']
@@ -158,7 +177,9 @@ function TopBar() {
             className="relative w-9 h-9 rounded-lg bg-dark-900/50 border border-white/5 flex items-center justify-center text-dark-400 hover:text-white hover:bg-white/5 transition-all"
           >
             <Icons.Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent-500" />
+            {hasRunning && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent-500" />
+            )}
           </button>
           {showNotifications && (
             <div className="absolute right-0 top-full mt-2 w-72 bg-dark-900 border border-white/10 rounded-xl shadow-2xl py-2 z-50">
@@ -166,29 +187,38 @@ function TopBar() {
                 <span className="text-sm font-semibold text-white">通知</span>
               </div>
               <div className="max-h-64 overflow-y-auto">
-                {[
-                  { title: '混剪任务完成', desc: '夏季防晒种草口播已生成', time: '5分钟前', icon: Icons.CheckCircle2, color: 'text-emerald-400' },
-                  { title: '发布成功', desc: '小红书视频已发布', time: '15分钟前', icon: Icons.Share2, color: 'text-brand-400' },
-                  { title: '任务排队', desc: '知识科普短视频排队中', time: '30分钟前', icon: Icons.Clock, color: 'text-amber-400' },
-                ].map((notif, idx) => {
-                  const NotifIcon = notif.icon
+                {notifTasks.length > 0 ? notifTasks.map((task) => {
+                  const conf = NOTIF_STATUS[task.status] || NOTIF_STATUS.processing
+                  const NotifIcon = Icons[conf.icon] || Icons.Circle
                   return (
-                    <div key={idx} className="px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer">
+                    <div
+                      key={task.id}
+                      className="px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer"
+                      onClick={() => { setShowNotifications(false); navigate('/dashboard/tasks') }}
+                    >
                       <div className="flex items-start gap-3">
-                        <NotifIcon className={`w-4 h-4 ${notif.color} mt-0.5 flex-shrink-0`} />
+                        <NotifIcon className={`w-4 h-4 ${conf.color} mt-0.5 flex-shrink-0`} />
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm text-white">{notif.title}</div>
-                          <div className="text-xs text-dark-400 mt-0.5 truncate">{notif.desc}</div>
-                          <div className="text-xs text-dark-500 mt-1">{notif.time}</div>
+                          <div className="text-sm text-white truncate">{task.title}</div>
+                          <div className="text-xs text-dark-400 mt-0.5 truncate">
+                            {task.type}{task.module ? ` · ${task.module}` : ''}
+                          </div>
+                          <div className="text-xs text-dark-500 mt-1">{timeAgo(task.createdAt)}</div>
                         </div>
                       </div>
                     </div>
                   )
-                })}
+                }) : (
+                  <div className="px-4 py-8 flex flex-col items-center justify-center text-center">
+                    <Icons.BellOff className="w-5 h-5 text-dark-500 mb-2" />
+                    <p className="text-xs text-dark-400">暂无任务通知</p>
+                    <p className="text-xs text-dark-500 mt-0.5">任务动态会实时显示在这里</p>
+                  </div>
+                )}
               </div>
               <div className="px-4 py-2 border-t border-white/5">
                 <button
-                  onClick={() => navigate('/dashboard/tasks')}
+                  onClick={() => { setShowNotifications(false); navigate('/dashboard/tasks') }}
                   className="text-xs text-brand-400 hover:text-brand-300 transition-colors w-full text-center"
                 >
                   查看全部任务
