@@ -26,6 +26,9 @@ export const setApiKey = (key) => {
 
 export const hasApiKey = () => !!getApiKey()
 
+/** 视频生成要求 sk_ 开头的 Secret Key；pk_ 是限流的发布 key（1 pollen/小时/IP），无法稳定出片 */
+export const hasVideoKey = () => getApiKey().trim().startsWith('sk_')
+
 /* ============================== 工具函数 ============================== */
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -580,9 +583,9 @@ export const generateLocalVideo = async (p) => {
   }
 }
 
-/** 智能生成：有 Key 走真实 AI，失败/无 Key 自动降级本地渲染 */
+/** 智能生成：有 有效 sk_ Key 走真实 AI，失败/无 Key/仅 pk_ 自动降级本地渲染 */
 export const generateVideo = async (type, params) => {
-  if (hasApiKey()) {
+  if (hasVideoKey()) {
     return type === 'text' ? generateTextToVideo(params) : generateImageToVideo(params)
   }
   return generateLocalVideo({ ...params, mode: type })
@@ -592,6 +595,7 @@ export default {
   getApiKey,
   setApiKey,
   hasApiKey,
+  hasVideoKey,
   generateTextToVideo,
   generateImageToVideo,
   generateLocalVideo,

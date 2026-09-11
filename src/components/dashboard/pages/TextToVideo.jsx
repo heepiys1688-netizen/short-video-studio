@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as Icons from 'lucide-react'
-import { generateTextToVideo, generateLocalVideo, downloadVideo, hasApiKey, getApiKey, setApiKey } from '../../../services/videoApi'
+import { generateTextToVideo, generateLocalVideo, downloadVideo, hasVideoKey, getApiKey, setApiKey } from '../../../services/videoApi'
 import { saveWork, getWorks, deleteWork, createTask, updateTask, on, timeAgo } from '../../../services/store'
 
 const VIDEO_STYLES = [
@@ -102,8 +102,8 @@ export default function TextToVideo() {
 
     let result = null
 
-    // 优先真实 AI（已配置 Pollinations Key）
-    if (hasApiKey()) {
+    // 优先真实 AI（已配置有效的 sk_ Key）
+    if (hasVideoKey()) {
       simulateProgress()
       try {
         result = await generateTextToVideo({
@@ -470,12 +470,12 @@ export default function TextToVideo() {
                 {isGenerating ? (
                   <>
                     <Icons.Loader2 className="w-5 h-5 animate-spin" />
-                    {hasApiKey() ? 'AI 生成中（约 1-3 分钟）...' : '本地渲染中（实时录制）...'} {Math.round(progress)}%
+                    {hasVideoKey() ? 'AI 生成中（约 1-3 分钟）...' : '本地渲染中（实时录制）...'} {Math.round(progress)}%
                   </>
                 ) : (
                   <>
                     <Icons.Wand2 className="w-5 h-5" />
-                    {hasApiKey() ? 'AI 生成视频' : '本地渲染生成视频'}
+                    {hasVideoKey() ? 'AI 生成视频' : '本地渲染生成视频'}
                   </>
                 )}
               </button>
@@ -483,15 +483,20 @@ export default function TextToVideo() {
               {/* API Key 状态 */}
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-1.5">
-                  {hasApiKey() ? (
+                  {hasVideoKey() ? (
                     <>
                       <Icons.CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
                       <span className="text-emerald-400">已接入 Pollinations 真实 AI（Seedance / Wan / Veo），失败自动降级本地渲染</span>
                     </>
+                  ) : getApiKey() ? (
+                    <>
+                      <Icons.XCircle className="w-3.5 h-3.5 text-red-400" />
+                      <span className="text-red-400">当前 Key 不是 sk_ 开头，视频生成无法使用（已用本地渲染）。请换成 Secret Key（sk_）</span>
+                    </>
                   ) : (
                     <>
                       <Icons.AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                      <span className="text-amber-400">未配置 Key：当前为本地渲染（免费无限出片）；配置 Pollinations Key 解锁真实 AI</span>
+                      <span className="text-amber-400">未配置 Key：当前为本地渲染（免费无限出片）；配置 sk_ Secret Key 解锁真实 AI</span>
                     </>
                   )}
                 </div>
@@ -499,9 +504,20 @@ export default function TextToVideo() {
                   onClick={() => setShowApiKeyModal(true)}
                   className="text-brand-400 hover:text-brand-300 transition-colors"
                 >
-                  {hasApiKey() ? '更换 API Key' : '配置 API Key'}
+                  {hasVideoKey() ? '更换 API Key' : '配置 API Key'}
                 </button>
               </div>
+
+              {/* 无效 Key 提示 */}
+              {getApiKey() && !hasVideoKey() && (
+                <div className="flex items-start gap-2 text-xs bg-red-500/10 border border-red-500/20 text-red-300 rounded-xl px-4 py-3">
+                  <Icons.AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    你当前保存的 Key（{getApiKey().slice(0, 6)}…）不是 <b>sk_</b> 开头。视频生成只接受 Secret Key；若这是 pk_ 发布 key，会被限流为每小时 1 次、无法出片。
+                    请到 <a href="https://enter.pollinations.ai/keys" target="_blank" rel="noreferrer" className="underline">enter.pollinations.ai/keys</a> 创建 sk_ 开头的 Key 后点击右上角「配置 API Key」重新填写。
+                  </span>
+                </div>
+              )}
 
               {/* 降级提示 */}
               {notice && (
