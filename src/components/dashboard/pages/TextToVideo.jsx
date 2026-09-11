@@ -28,7 +28,7 @@ const RESOLUTIONS = [
   { id: '4k', name: '4K Ultra HD', width: 3840, height: 2160 },
 ]
 
-const DURATIONS = [6, 12, 18, 24, 30]
+const DURATIONS = [5, 10]
 
 export default function TextToVideo() {
   const navigate = useNavigate()
@@ -36,7 +36,7 @@ export default function TextToVideo() {
   const [negativePrompt, setNegativePrompt] = useState('')
   const [selectedStyle, setSelectedStyle] = useState('cinematic')
   const [selectedMotion, setSelectedMotion] = useState('push')
-  const [duration, setDuration] = useState(6)
+  const [duration, setDuration] = useState(5)
   const [resolution, setResolution] = useState('1080p')
   const [seed, setSeed] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
@@ -102,7 +102,7 @@ export default function TextToVideo() {
 
     let result = null
 
-    // 优先真实 AI（已配置有效的 sk_ Key）
+    // 优先真实 AI（已配置智谱 Key）
     if (hasVideoKey()) {
       simulateProgress()
       try {
@@ -237,7 +237,7 @@ export default function TextToVideo() {
             <Icons.Type className="w-7 h-7 text-brand-400" />
             文生视频
           </h1>
-          <p className="text-dark-400 text-sm mt-1">输入文字描述，AI 自动生成高质量短视频。支持 1080p 分辨率，最长 30 秒。</p>
+          <p className="text-dark-400 text-sm mt-1">输入文字描述，调用智谱免费模型 CogVideoX-Flash 生成短视频。配置 Key 走真实 AI，无 Key 自动本地渲染。</p>
         </div>
         <div className="flex bg-dark-800 rounded-lg p-1">
           {[
@@ -486,17 +486,17 @@ export default function TextToVideo() {
                   {hasVideoKey() ? (
                     <>
                       <Icons.CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">已接入 Nova Reel（720p · 0.08 Pollen/秒），余额不足自动降级本地渲染</span>
+                      <span className="text-emerald-400">已接入智谱 CogVideoX-Flash（免费），失败自动降级本地渲染</span>
                     </>
                   ) : getApiKey() ? (
                     <>
                       <Icons.XCircle className="w-3.5 h-3.5 text-red-400" />
-                      <span className="text-red-400">当前 Key 不是 sk_ 开头，视频生成无法使用（已用本地渲染）。请换成 Secret Key（sk_）</span>
+                      <span className="text-red-400">当前 Key 格式不正确（应为形如 id.secret 的智谱密钥），已用本地渲染。请重新填写</span>
                     </>
                   ) : (
                     <>
                       <Icons.AlertCircle className="w-3.5 h-3.5 text-amber-400" />
-                      <span className="text-amber-400">未配置 Key：当前为本地渲染（免费无限出片）；配置 sk_ Secret Key 解锁真实 AI</span>
+                      <span className="text-amber-400">未配置 Key：当前为本地渲染（免费无限出片）；配置智谱 Key 解锁免费真实 AI</span>
                     </>
                   )}
                 </div>
@@ -513,8 +513,8 @@ export default function TextToVideo() {
                 <div className="flex items-start gap-2 text-xs bg-red-500/10 border border-red-500/20 text-red-300 rounded-xl px-4 py-3">
                   <Icons.AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>
-                    你当前保存的 Key（{getApiKey().slice(0, 6)}…）不是 <b>sk_</b> 开头。视频生成只接受 Secret Key；若这是 pk_ 发布 key，会被限流为每小时 1 次、无法出片。
-                    请到 <a href="https://enter.pollinations.ai/keys" target="_blank" rel="noreferrer" className="underline">enter.pollinations.ai/keys</a> 创建 sk_ 开头的 Key 后点击右上角「配置 API Key」重新填写。
+                    你当前保存的 Key（{getApiKey().slice(0, 6)}…）格式不正确。视频生成需要智谱开放平台（bigmodel.cn）的 API Key（形如 id.secret，含小数点）。
+                    请到 <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" rel="noreferrer" className="underline">bigmodel.cn API Keys 页面</a> 复制完整 Key 后点击右上角「配置 API Key」重新填写。
                   </span>
                 </div>
               )}
@@ -707,17 +707,17 @@ export default function TextToVideo() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-dark-300 mb-2">
-                  Pollinations API Key（免费）
+                  智谱 API Key（免费模型）
                 </label>
                 <input
                   type="password"
                   value={apiKeyInput}
                   onChange={e => setApiKeyInput(e.target.value)}
-                  placeholder="sk_xxxxxxxxxxxxxxxx"
+                  placeholder="id.secret 格式，如 12345678.abcdefgh…"
                   className="w-full bg-dark-800/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-dark-500 focus:outline-none focus:border-brand-500/50 transition-all"
                 />
                 <p className="text-dark-500 text-xs mt-2">
-                  在 <a href="https://enter.pollinations.ai" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">enter.pollinations.ai</a> 注册登录后，进入 Keys 页面创建 <span className="text-dark-300">Secret Key（sk_ 开头）</span>。视频生成必须用 sk_（裸 pk_ 会被限流、无法出片），账户有免费额度可用。留空则仅用本地渲染。
+                  在 <a href="https://bigmodel.cn" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">bigmodel.cn</a> 用手机号注册（免信用卡）后，进入「API Keys」页面创建密钥，复制完整 Key（形如 <span className="text-dark-300">id.secret</span>，含小数点）。视频用的是免费模型 CogVideoX-Flash，无需付费。留空则仅用本地渲染。
                 </p>
               </div>
 
@@ -727,7 +727,7 @@ export default function TextToVideo() {
                   <span className="font-medium">生成引擎说明</span>
                 </div>
                 <div className="text-xs text-dark-400 space-y-1">
-                  <p>• <span className="text-emerald-300">真实 AI（配置 Key 后启用）</span>：Seedance / Wan / Veo 等模型，输出 1080p MP4</p>
+                  <p>• <span className="text-emerald-300">真实 AI（配置 Key 后启用）</span>：智谱 CogVideoX-Flash 免费模型，输入文字生成 MP4 视频</p>
                   <p>• <span className="text-amber-300">本地渲染（默认，无需 Key）</span>：浏览器内实时渲染风格化动态样片，免费无限次，必定出片</p>
                   <p>• AI 生成失败时会自动降级为本地渲染，不会中断使用</p>
                 </div>

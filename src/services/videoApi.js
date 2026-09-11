@@ -1,11 +1,9 @@
 /**
- * 视频生成服务层 v3
+ * 视频生成服务层 v4
  *
- * 引擎一（真实 AI · 按秒扣费）：Pollinations gen.pollinations.ai
-  *   - 模型：amazon/nova-reel-v1（AWS Nova Reel，720p，6–120s，6 的倍数）
-  *   - 说明：Pollinations 所有视频模型都按秒消耗 Pollen（无真正免费的视频模型）；
-  *     nova-reel 是免费账户（免付费订阅）也能调用的最便宜视频模型（0.08 Pollen/秒）
-  *   - 需要 Secret Key（sk_ 开头，在 https://enter.pollinations.ai 注册后创建）
+ * 引擎一（真实 AI · 免费）：智谱 CogVideoX-Flash
+ *   - 模型：cogvideox-flash（智谱免费视频生成模型，支持文生视频 / 图生视频）
+ *   - 地址：open.bigmodel.cn（国内直连），需 API Key（bigmodel.cn 控制台创建，形如 id.secret）
  *
  * 引擎二（本地渲染）：Canvas + MediaRecorder
  *   - 无需 Key、无需网络，浏览器内实时渲染真实视频文件（MP4/WebM），保证 100% 出片
@@ -13,7 +11,7 @@
  *   - 图生视频：对上传图片施加 Ken Burns / 视差 / 流体等电影级动效
  */
 
-const POLLINATIONS_BASE = 'https://gen.pollinations.ai'
+const ZHIPU_BASE = 'https://open.bigmodel.cn/api/paas/v4'
 const KEY_STORAGE = 'video_api_key'
 
 /* ============================== Key 管理 ============================== */
@@ -28,8 +26,11 @@ export const setApiKey = (key) => {
 
 export const hasApiKey = () => !!getApiKey()
 
-/** 视频生成要求 sk_ 开头的 Secret Key；pk_ 是限流的发布 key（1 pollen/小时/IP），无法稳定出片 */
-export const hasVideoKey = () => getApiKey().trim().startsWith('sk_')
+/** 智谱 API Key 形如 {id}.{secret}；含 '.' 视为有效，作为是否走真实 AI 的开关 */
+export const hasVideoKey = () => {
+  const k = getApiKey().trim()
+  return k.length > 0 && k.includes('.')
+}
 
 /* ============================== 工具函数 ============================== */
 
@@ -46,8 +47,7 @@ const fetchWithRetry = async (url, options = {}, { timeout = 300000, retries = 2
       clearTimeout(timer)
       if (resp.ok) return resp
 
-      if (resp.status === 401) throw new Error('API Key 无效或缺失，请配置 Pollinations Secret Key（sk_ 开头，登录 enter.pollinations.ai 创建）')
-      if (resp.status === 402) throw new Error('Pollinations 余额（Pollen）不足：AI 视频按秒扣费、无免费视频模型。可到 enter.pollinations.ai 购买 Pollen，或完成 Quest/给仓库点星升级 Seed 等级获取每日额度')
+      if (resp.status === 401) throw new Error('API Key 无效或已过期，请到 bigmodel.cn 控制台的 API Keys 页面复制完整的智谱密钥（形如 id.secret）')
       if (resp.status === 429 || resp.status === 503) {
         const retryAfter = parseInt(resp.headers.get('Retry-After') || '8', 10)
         lastErr = new Error(resp.status === 429 ? '请求过于频繁，正在排队重试' : '模型正在加载，正在重试')
@@ -59,7 +59,7 @@ const fetchWithRetry = async (url, options = {}, { timeout = 300000, retries = 2
     } catch (err) {
       clearTimeout(timer)
       if (err.name === 'AbortError') throw new Error('生成超时（超过 5 分钟），请缩短时长或稍后重试')
-      if (err.message.startsWith('API Key') || err.message.startsWith('Pollinations') || err.message.startsWith('生成服务')) throw err
+      if (err.message.startsWith('API Key') || err.message.startsWith('生成')) throw err
       lastErr = err
       if (attempt < retries) await sleep(3000)
     }
@@ -77,131 +77,146 @@ export const downloadVideo = (videoUrl, filename = 'ai-video', ext = 'mp4') => {
   document.body.removeChild(a)
 }
 
-/* ============================== Pollinations 真实 AI ============================== */
+/* ============================== 智谱 CogVideoX-Flash 真实 AI（免费） ============================== */
 
-/**
- * 免费模型选择：amazon/nova-reel-v1（AWS Nova Reel）
- *   - 免费账户（种子额度）即可调用；是 Pollinations 唯一免 paid_only 的官方视频模型
- *   - 720p，6–120 秒，时长必须是 6 的倍数；支持图片作首帧（图生视频）
- *
- * 其余视频模型（Veo / Wan / Seedance / Gemini-Omni / MiniMax / Grok 等）均需付费订阅，
- * 免费账户调用会报 402/权限错误，故本服务仅走免费模型。
- */
-const pickModels = (duration) => {
-  const d = Number(duration) || 6
-  const dur = Math.max(6, Math.min(120, Math.round(d / 6) * 6))
-  return [{ name: 'amazon/nova-reel-v1', dur }]
+const ZHIPU_MODEL = 'cogvideox-flash'
+
+/** base64url 编码（浏览器 JWT 用） */
+const b64url = (bytes) => {
+  let bin = ''
+  bytes.forEach((b) => { bin += String.fromCharCode(b) })
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-/** 调用 Pollinations 视频端点，返回 { videoUrl, model, duration } */
-const pollinationsVideo = async ({ prompt, duration, aspectRatio = '16:9', resolution = '1080p', seed, imageUrl, isI2V = false }) => {
+/** 由 id.secret 生成 JWT（HS256），浏览器 WebCrypto 实现；非 id.secret 则直接返回原 key */
+const generateZhipuToken = async (apiKey) => {
+  const parts = (apiKey || '').split('.')
+  if (parts.length !== 2) return apiKey
+  const [id, secret] = parts
+  const enc = new TextEncoder()
+  const header = { alg: 'HS256', sign_type: 'SIGN' }
+  const nowMs = Date.now()
+  const payload = { api_key: id, exp: nowMs + 3600 * 1000, timestamp: nowMs }
+  const h = b64url(enc.encode(JSON.stringify(header)))
+  const p = b64url(enc.encode(JSON.stringify(payload)))
+  const input = `${h}.${p}`
+  const cryptoKey = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(input))
+  return `${input}.${b64url(new Uint8Array(sig))}`
+}
+
+/** 压缩/缩放图片到 base64（限长边 1920、JPEG≈0.85），满足智谱 ≤5MB 上传要求 */
+const prepareImageForApi = (dataUrl) => new Promise((resolve, reject) => {
+  const img = new Image()
+  img.onload = () => {
+    let { width, height } = img
+    const maxEdge = 1920
+    if (Math.max(width, height) > maxEdge) {
+      const s = maxEdge / Math.max(width, height)
+      width = Math.round(width * s)
+      height = Math.round(height * s)
+    }
+    const c = document.createElement('canvas')
+    c.width = width
+    c.height = height
+    c.getContext('2d').drawImage(img, 0, 0, width, height)
+    const out = c.toDataURL('image/jpeg', 0.85)
+    resolve(out.split(',')[1] || out) // 纯 base64（智谱 image_url 支持 base64 编码）
+  }
+  img.onerror = () => reject(new Error('图片处理失败'))
+  img.src = dataUrl
+})
+
+/** 创建视频生成任务，返回任务 id */
+const createZhipuVideo = async ({ prompt, imageBase64 }) => {
+  const token = await generateZhipuToken(getApiKey())
+  const body = { model: ZHIPU_MODEL, prompt: (prompt || '').trim().slice(0, 512) }
+  if (imageBase64) body.image_url = imageBase64
+  const resp = await fetchWithRetry(`${ZHIPU_BASE}/videos/generations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  }, { timeout: 60000, retries: 1 })
+  const data = await resp.json().catch(() => ({}))
+  if (data?.error) throw new Error(data.error.message || '创建视频任务失败')
+  if (!data?.id) throw new Error('未返回任务 ID')
+  return data.id
+}
+
+/** 轮询异步结果，返回 { videoUrl, coverUrl } */
+const pollZhipuVideo = async (id) => {
+  const token = await generateZhipuToken(getApiKey())
+  for (let i = 0; i < 72; i++) { // 最多约 6 分钟
+    await sleep(5000)
+    const resp = await fetchWithRetry(`${ZHIPU_BASE}/async-result/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }, { timeout: 30000, retries: 1 })
+    const data = await resp.json().catch(() => ({}))
+    const status = data?.task_status
+    if (status === 'SUCCESS') {
+      const vr = data?.video_result?.[0] || {}
+      if (!vr?.url) throw new Error('生成成功但未返回视频地址')
+      return { videoUrl: vr.url, coverUrl: vr.cover_image_url || vr.cover_url || '' }
+    }
+    if (status === 'FAIL' || status === 'FAILED') throw new Error(data?.error?.message || '视频生成失败')
+  }
+  throw new Error('生成超时（超过 6 分钟），请稍后重试')
+}
+
+/** 抓取远程视频为 Blob（用于本地保存与预览） */
+const urlToBlob = async (url) => {
+  const resp = await fetch(url)
+  if (!resp.ok) throw new Error('视频下载失败')
+  return resp.blob()
+}
+
+/** 统一 AI 出片流程：创建 → 轮询 → 抓取 blob */
+const zhipuVideo = async ({ prompt, imageBase64 }) => {
   const key = getApiKey()
   if (!key) throw new Error('未配置 API Key')
-
-  // nova-reel 固定 720p，width/height 仅决定宽高比
-  let width = 1280
-  let height = 720
-  if (aspectRatio === '9:16') { width = 720; height = 1280 }
-  else if (aspectRatio === '1:1') { width = 720; height = 720 }
-  else if (aspectRatio === '4:3') { width = 960; height = 720 }
-  const models = pickModels(duration)
-  let lastErr = null
-
-  for (const m of models) {
-    try {
-      const qs = new URLSearchParams({
-        model: m.name,
-        duration: String(m.dur),
-        aspectRatio,
-        width: String(width),
-        height: String(height),
-        key,
-      })
-      if (seed) qs.set('seed', String(seed))
-      if (imageUrl) qs.set('image', imageUrl)
-
-      const url = `${POLLINATIONS_BASE}/video/${encodeURIComponent(prompt.slice(0, 1500))}?${qs}`
-      const resp = await fetchWithRetry(url, { method: 'GET', headers: { Authorization: `Bearer ${key}` } })
-      const blob = await resp.blob()
-      if (!blob.type.includes('video') && blob.size < 10000) {
-        const text = await blob.text().catch(() => '')
-        throw new Error(text.slice(0, 120) || '返回的不是视频数据')
-      }
-      return {
-        success: true,
-        engine: 'api',
-        videoUrl: URL.createObjectURL(blob),
-        blob,
-        model: m.name,
-        duration: m.dur,
-        ext: 'mp4',
-      }
-    } catch (err) {
-      console.warn(`[videoApi] 模型 ${m.name} 失败:`, err.message)
-      lastErr = err
-      if (err.message.startsWith('API Key') || err.message.startsWith('Pollinations 账户')) throw err
-    }
+  const id = await createZhipuVideo({ prompt, imageBase64 })
+  const { videoUrl, coverUrl } = await pollZhipuVideo(id)
+  let blob = null
+  try {
+    blob = await urlToBlob(videoUrl)
+  } catch { /* 抓取失败时仍返回远程 URL */ }
+  return {
+    success: true,
+    engine: 'api',
+    videoUrl: blob ? URL.createObjectURL(blob) : videoUrl,
+    remoteUrl: videoUrl,
+    coverUrl,
+    blob,
+    model: ZHIPU_MODEL,
+    ext: 'mp4',
   }
-  throw lastErr || new Error('所有视频模型均不可用')
-}
-
-/** 上传图片到 Pollinations 媒体库，返回可公开访问的 URL（图生视频首帧用） */
-const uploadImage = async (dataUrl) => {
-  const key = getApiKey()
-  const blob = await (await fetch(dataUrl)).blob()
-  const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
-  const form = new FormData()
-  form.append('file', blob, `start-frame.${ext}`)
-
-  const resp = await fetchWithRetry('https://media.pollinations.ai/upload', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}` },
-    body: form,
-  }, { timeout: 90000, retries: 1 })
-  const data = await resp.json().catch(() => null)
-  const url = typeof data === 'string' ? data : data?.url || (data?.id ? `https://media.pollinations.ai/${data.id}` : null)
-  if (!url) throw new Error('图片上传失败')
-  return url
 }
 
 /**
- * 文生视频（真实 AI）
- * @param {Object} p - { prompt, negativePrompt, duration, aspectRatio, resolution, seed, referenceImage }
+ * 文生视频（真实 AI，免费 CogVideoX-Flash）
+ * @param {Object} p - { prompt, negativePrompt, referenceImage }
  */
 export const generateTextToVideo = async (p) => {
-  const { prompt, negativePrompt = '', duration = 5, aspectRatio = '16:9', resolution = '1080p', seed, referenceImage } = p
+  const { prompt, negativePrompt = '', referenceImage } = p
   if (!prompt?.trim()) throw new Error('请输入提示词')
-
   let fullPrompt = prompt.trim()
-  if (negativePrompt.trim()) fullPrompt += `. Avoid: ${negativePrompt.trim()}`
-
-  let imageUrl = null
-  if (referenceImage) imageUrl = await uploadImage(referenceImage)
-
-  return pollinationsVideo({
-    prompt: fullPrompt,
-    duration,
-    aspectRatio,
-    resolution,
-    seed,
-    imageUrl,
-    isI2V: !!imageUrl,
-  })
+  if (negativePrompt.trim()) fullPrompt += `。避免：${negativePrompt.trim()}`
+  let imageBase64 = null
+  if (referenceImage) imageBase64 = await prepareImageForApi(referenceImage)
+  return zhipuVideo({ prompt: fullPrompt, imageBase64 })
 }
 
 /**
- * 图生视频（真实 AI）
- * @param {Object} p - { image(dataURL), prompt, duration, resolution, motionIntensity }
+ * 图生视频（真实 AI，免费 CogVideoX-Flash）
+ * @param {Object} p - { image(dataURL), prompt, motionIntensity }
  */
 export const generateImageToVideo = async (p) => {
-  const { image, prompt = '', duration = 5, resolution = '1080p', motionIntensity = 50 } = p
+  const { image, prompt = '', motionIntensity = 50 } = p
   if (!image) throw new Error('请上传图片')
-
-  const imageUrl = await uploadImage(image)
-  const motionDesc = motionIntensity > 66 ? 'dynamic cinematic camera motion' : motionIntensity > 33 ? 'gentle camera motion' : 'subtle slow motion'
-  const fullPrompt = `${prompt ? prompt + ', ' : ''}animate this image, ${motionDesc}, high quality`
-
-  return pollinationsVideo({ prompt: fullPrompt, duration, resolution, imageUrl, isI2V: true })
+  const imageBase64 = await prepareImageForApi(image)
+  const motionDesc = motionIntensity > 66 ? '动态电影运镜' : motionIntensity > 33 ? '轻柔运镜' : '细腻慢动作'
+  const fullPrompt = `${prompt ? prompt + '，' : ''}让这张图动起来，${motionDesc}，高清`
+  return zhipuVideo({ prompt: fullPrompt, imageBase64 })
 }
 
 /* ============================== 本地渲染引擎（保底，零依赖） ============================== */
@@ -573,7 +588,7 @@ export const generateLocalVideo = async (p) => {
   }
 }
 
-/** 智能生成：有 有效 sk_ Key 走真实 AI，失败/无 Key/仅 pk_ 自动降级本地渲染 */
+/** 智能生成：配置了智谱 Key 走免费真实 AI（CogVideoX-Flash），失败/无 Key 自动降级本地渲染 */
 export const generateVideo = async (type, params) => {
   if (hasVideoKey()) {
     return type === 'text' ? generateTextToVideo(params) : generateImageToVideo(params)
