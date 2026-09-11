@@ -28,7 +28,7 @@ const RESOLUTIONS = [
   { id: '4k', name: '4K Ultra HD', width: 3840, height: 2160 },
 ]
 
-const DURATIONS = [5, 10, 15, 20, 25, 30]
+const DURATIONS = [6, 12, 18, 24, 30]
 
 export default function TextToVideo() {
   const navigate = useNavigate()
@@ -36,7 +36,7 @@ export default function TextToVideo() {
   const [negativePrompt, setNegativePrompt] = useState('')
   const [selectedStyle, setSelectedStyle] = useState('cinematic')
   const [selectedMotion, setSelectedMotion] = useState('push')
-  const [duration, setDuration] = useState(10)
+  const [duration, setDuration] = useState(6)
   const [resolution, setResolution] = useState('1080p')
   const [seed, setSeed] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
@@ -486,7 +486,7 @@ export default function TextToVideo() {
                   {hasVideoKey() ? (
                     <>
                       <Icons.CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">已接入 Pollinations 真实 AI（Seedance / Wan / Veo），失败自动降级本地渲染</span>
+                      <span className="text-emerald-400">已接入 Pollinations 免费模型（Nova Reel · 720p），失败自动降级本地渲染</span>
                     </>
                   ) : getApiKey() ? (
                     <>

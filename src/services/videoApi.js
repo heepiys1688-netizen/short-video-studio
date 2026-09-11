@@ -1,9 +1,10 @@
 /**
- * 视频生成服务层 v2
+ * 视频生成服务层 v3
  *
- * 引擎一（真实 AI）：Pollinations gen.pollinations.ai
- *   - 模型：Veo / Wan / Seedance / Nova Reel 等，直接返回 MP4
- *   - 需要 Secret Key（sk_ 开头，在 https://enter.pollinations.ai 注册后创建；裸 pk_ 限流 1 pollen/小时，不适用于视频）
+ * 引擎一（真实 AI · 免费）：Pollinations gen.pollinations.ai
+ *   - 模型：amazon/nova-reel-v1（AWS Nova Reel，720p，6–120s，6 的倍数）
+ *   - 这是 Pollinations 免付费订阅（免费种子额度）也能用的官方视频模型
+ *   - 需要 Secret Key（sk_ 开头，在 https://enter.pollinations.ai 注册后创建）
  *
  * 引擎二（本地渲染）：Canvas + MediaRecorder
  *   - 无需 Key、无需网络，浏览器内实时渲染真实视频文件（MP4/WebM），保证 100% 出片
@@ -77,34 +78,18 @@ export const downloadVideo = (videoUrl, filename = 'ai-video', ext = 'mp4') => {
 
 /* ============================== Pollinations 真实 AI ============================== */
 
-/** 按时长选择最合适的模型链（使用 Pollinations 官方 canonical id） */
-const pickModels = (duration, isI2V) => {
-  const d = Number(duration) || 5
-  // 长视频用 nova-reel（支持 6-120s，需 6 的倍数）
-  if (d > 15) {
-    const dur = Math.min(120, Math.max(6, Math.round(d / 6) * 6))
-    return [{ name: 'amazon/nova-reel-v1', dur }]
-  }
-  if (isI2V) {
-    // 图生视频：优先支持参考图首帧的模型
-    return [
-      { name: 'bytedance/seedance-2.0', dur: Math.min(15, Math.max(4, d)) },
-      { name: 'alibaba/wan-2.6', dur: Math.min(15, Math.max(2, d)) },
-      { name: 'google/veo-3.1-fast', dur: d <= 5 ? 4 : d <= 6 ? 6 : 8 },
-    ]
-  }
-  if (d <= 8) {
-    return [
-      { name: 'google/veo-3.1-fast', dur: d <= 4 ? 4 : d <= 6 ? 6 : 8 },
-      { name: 'alibaba/wan-2.2-fast', dur: Math.min(15, Math.max(2, d)) },
-      { name: 'google/gemini-omni-1.1-flash', dur: Math.min(10, Math.max(3, d)) },
-    ]
-  }
-  return [
-    { name: 'alibaba/wan-2.6', dur: Math.min(15, Math.max(2, d)) },
-    { name: 'bytedance/seedance-2.0', dur: Math.min(15, Math.max(4, d)) },
-    { name: 'google/gemini-omni-1.1-flash', dur: Math.min(10, Math.max(3, d)) },
-  ]
+/**
+ * 免费模型选择：amazon/nova-reel-v1（AWS Nova Reel）
+ *   - 免费账户（种子额度）即可调用；是 Pollinations 唯一免 paid_only 的官方视频模型
+ *   - 720p，6–120 秒，时长必须是 6 的倍数；支持图片作首帧（图生视频）
+ *
+ * 其余视频模型（Veo / Wan / Seedance / Gemini-Omni / MiniMax / Grok 等）均需付费订阅，
+ * 免费账户调用会报 402/权限错误，故本服务仅走免费模型。
+ */
+const pickModels = (duration) => {
+  const d = Number(duration) || 6
+  const dur = Math.max(6, Math.min(120, Math.round(d / 6) * 6))
+  return [{ name: 'amazon/nova-reel-v1', dur }]
 }
 
 /** 调用 Pollinations 视频端点，返回 { videoUrl, model, duration } */
@@ -112,9 +97,13 @@ const pollinationsVideo = async ({ prompt, duration, aspectRatio = '16:9', resol
   const key = getApiKey()
   if (!key) throw new Error('未配置 API Key')
 
-  const width = resolution === '4k' ? 1920 : resolution === '720p' ? 1280 : 1920
-  const height = Math.round(width * 9 / 16)
-  const models = pickModels(duration, isI2V)
+  // nova-reel 固定 720p，width/height 仅决定宽高比
+  let width = 1280
+  let height = 720
+  if (aspectRatio === '9:16') { width = 720; height = 1280 }
+  else if (aspectRatio === '1:1') { width = 720; height = 720 }
+  else if (aspectRatio === '4:3') { width = 960; height = 720 }
+  const models = pickModels(duration)
   let lastErr = null
 
   for (const m of models) {
