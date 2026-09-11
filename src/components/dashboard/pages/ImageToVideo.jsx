@@ -469,7 +469,7 @@ export default function ImageToVideo() {
                   {hasVideoKey() ? (
                     <>
                       <Icons.CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">已接入 Pollinations 免费模型（Nova Reel · 720p），失败自动降级本地渲染</span>
+                      <span className="text-emerald-400">已接入 Nova Reel（720p · 0.08 Pollen/秒），余额不足自动降级本地渲染</span>
                     </>
                   ) : getApiKey() ? (
                     <>

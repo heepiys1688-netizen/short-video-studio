@@ -1,10 +1,11 @@
 /**
  * 视频生成服务层 v3
  *
- * 引擎一（真实 AI · 免费）：Pollinations gen.pollinations.ai
- *   - 模型：amazon/nova-reel-v1（AWS Nova Reel，720p，6–120s，6 的倍数）
- *   - 这是 Pollinations 免付费订阅（免费种子额度）也能用的官方视频模型
- *   - 需要 Secret Key（sk_ 开头，在 https://enter.pollinations.ai 注册后创建）
+ * 引擎一（真实 AI · 按秒扣费）：Pollinations gen.pollinations.ai
+  *   - 模型：amazon/nova-reel-v1（AWS Nova Reel，720p，6–120s，6 的倍数）
+  *   - 说明：Pollinations 所有视频模型都按秒消耗 Pollen（无真正免费的视频模型）；
+  *     nova-reel 是免费账户（免付费订阅）也能调用的最便宜视频模型（0.08 Pollen/秒）
+  *   - 需要 Secret Key（sk_ 开头，在 https://enter.pollinations.ai 注册后创建）
  *
  * 引擎二（本地渲染）：Canvas + MediaRecorder
  *   - 无需 Key、无需网络，浏览器内实时渲染真实视频文件（MP4/WebM），保证 100% 出片
@@ -46,7 +47,7 @@ const fetchWithRetry = async (url, options = {}, { timeout = 300000, retries = 2
       if (resp.ok) return resp
 
       if (resp.status === 401) throw new Error('API Key 无效或缺失，请配置 Pollinations Secret Key（sk_ 开头，登录 enter.pollinations.ai 创建）')
-      if (resp.status === 402) throw new Error('Pollinations 账户额度（Pollen）不足，请稍后额度重置后再试')
+      if (resp.status === 402) throw new Error('Pollinations 余额（Pollen）不足：AI 视频按秒扣费、无免费视频模型。可到 enter.pollinations.ai 购买 Pollen，或完成 Quest/给仓库点星升级 Seed 等级获取每日额度')
       if (resp.status === 429 || resp.status === 503) {
         const retryAfter = parseInt(resp.headers.get('Retry-After') || '8', 10)
         lastErr = new Error(resp.status === 429 ? '请求过于频繁，正在排队重试' : '模型正在加载，正在重试')
