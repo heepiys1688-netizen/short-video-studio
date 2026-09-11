@@ -697,11 +697,11 @@ export default function TextToVideo() {
                   type="password"
                   value={apiKeyInput}
                   onChange={e => setApiKeyInput(e.target.value)}
-                  placeholder="pk_xxxxxxxxxxxxxxxx"
+                  placeholder="sk_xxxxxxxxxxxxxxxx"
                   className="w-full bg-dark-800/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-dark-500 focus:outline-none focus:border-brand-500/50 transition-all"
                 />
                 <p className="text-dark-500 text-xs mt-2">
-                  在 <a href="https://enter.pollinations.ai" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">enter.pollinations.ai</a> 用 GitHub 一键登录，创建 <span className="text-dark-300">Publishable Key（pk_ 开头）</span>即可免费生成真实 AI 视频。留空则使用本地渲染。
+                  在 <a href="https://enter.pollinations.ai" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">enter.pollinations.ai</a> 注册登录后，进入 Keys 页面创建 <span className="text-dark-300">Secret Key（sk_ 开头）</span>。视频生成必须用 sk_（裸 pk_ 会被限流、无法出片），账户有免费额度可用。留空则仅用本地渲染。
                 </p>
               </div>
 

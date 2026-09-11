@@ -2,8 +2,8 @@
  * 视频生成服务层 v2
  *
  * 引擎一（真实 AI）：Pollinations gen.pollinations.ai
- *   - 模型：Seedance / Wan / Veo / Nova Reel 等，直接返回 MP4
- *   - 需要免费 API Key（pk_ 浏览器安全 Key，在 https://enter.pollinations.ai 用 GitHub 一键注册）
+ *   - 模型：Veo / Wan / Seedance / Nova Reel 等，直接返回 MP4
+ *   - 需要 Secret Key（sk_ 开头，在 https://enter.pollinations.ai 注册后创建；裸 pk_ 限流 1 pollen/小时，不适用于视频）
  *
  * 引擎二（本地渲染）：Canvas + MediaRecorder
  *   - 无需 Key、无需网络，浏览器内实时渲染真实视频文件（MP4/WebM），保证 100% 出片
@@ -41,7 +41,7 @@ const fetchWithRetry = async (url, options = {}, { timeout = 300000, retries = 2
       clearTimeout(timer)
       if (resp.ok) return resp
 
-      if (resp.status === 401) throw new Error('API Key 无效或已过期，请在「配置 API Key」中检查（需 Pollinations pk_ / sk_ Key）')
+      if (resp.status === 401) throw new Error('API Key 无效或缺失，请配置 Pollinations Secret Key（sk_ 开头，登录 enter.pollinations.ai 创建）')
       if (resp.status === 402) throw new Error('Pollinations 账户额度（Pollen）不足，请稍后额度重置后再试')
       if (resp.status === 429 || resp.status === 503) {
         const retryAfter = parseInt(resp.headers.get('Retry-After') || '8', 10)
@@ -74,21 +74,33 @@ export const downloadVideo = (videoUrl, filename = 'ai-video', ext = 'mp4') => {
 
 /* ============================== Pollinations 真实 AI ============================== */
 
-/** 按时长选择最合适的模型链 */
+/** 按时长选择最合适的模型链（使用 Pollinations 官方 canonical id） */
 const pickModels = (duration, isI2V) => {
   const d = Number(duration) || 5
-  if (d > 15) return [{ name: 'nova-reel', dur: Math.min(120, Math.max(6, Math.round(d / 6) * 6)) }]
+  // 长视频用 nova-reel（支持 6-120s，需 6 的倍数）
+  if (d > 15) {
+    const dur = Math.min(120, Math.max(6, Math.round(d / 6) * 6))
+    return [{ name: 'amazon/nova-reel-v1', dur }]
+  }
   if (isI2V) {
+    // 图生视频：优先支持参考图首帧的模型
     return [
-      { name: 'seedance', dur: Math.min(10, Math.max(2, d)) },
-      { name: 'wan-fast', dur: Math.min(15, Math.max(2, d)) },
-      { name: 'veo', dur: 8 },
+      { name: 'bytedance/seedance-2.0', dur: Math.min(15, Math.max(4, d)) },
+      { name: 'alibaba/wan-2.6', dur: Math.min(15, Math.max(2, d)) },
+      { name: 'google/veo-3.1-fast', dur: d <= 5 ? 4 : d <= 6 ? 6 : 8 },
+    ]
+  }
+  if (d <= 8) {
+    return [
+      { name: 'google/veo-3.1-fast', dur: d <= 4 ? 4 : d <= 6 ? 6 : 8 },
+      { name: 'alibaba/wan-2.2-fast', dur: Math.min(15, Math.max(2, d)) },
+      { name: 'google/gemini-omni-1.1-flash', dur: Math.min(10, Math.max(3, d)) },
     ]
   }
   return [
-    { name: 'wan-fast', dur: Math.min(15, Math.max(2, d)) },
-    { name: 'seedance', dur: Math.min(10, Math.max(2, d)) },
-    { name: 'wan', dur: Math.min(15, Math.max(2, d)) },
+    { name: 'alibaba/wan-2.6', dur: Math.min(15, Math.max(2, d)) },
+    { name: 'bytedance/seedance-2.0', dur: Math.min(15, Math.max(4, d)) },
+    { name: 'google/gemini-omni-1.1-flash', dur: Math.min(10, Math.max(3, d)) },
   ]
 }
 
@@ -116,7 +128,7 @@ const pollinationsVideo = async ({ prompt, duration, aspectRatio = '16:9', resol
       if (imageUrl) qs.set('image', imageUrl)
 
       const url = `${POLLINATIONS_BASE}/video/${encodeURIComponent(prompt.slice(0, 1500))}?${qs}`
-      const resp = await fetchWithRetry(url, { method: 'GET' })
+      const resp = await fetchWithRetry(url, { method: 'GET', headers: { Authorization: `Bearer ${key}` } })
       const blob = await resp.blob()
       if (!blob.type.includes('video') && blob.size < 10000) {
         const text = await blob.text().catch(() => '')
@@ -148,14 +160,15 @@ const uploadImage = async (dataUrl) => {
   const form = new FormData()
   form.append('file', blob, `start-frame.${ext}`)
 
-  const resp = await fetchWithRetry(`${POLLINATIONS_BASE}/upload`, {
+  const resp = await fetchWithRetry('https://media.pollinations.ai/upload', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}` },
     body: form,
-  }, { timeout: 60000, retries: 1 })
-  const data = await resp.json()
-  if (!data?.url) throw new Error('图片上传失败')
-  return data.url
+  }, { timeout: 90000, retries: 1 })
+  const data = await resp.json().catch(() => null)
+  const url = typeof data === 'string' ? data : data?.url || (data?.id ? `https://media.pollinations.ai/${data.id}` : null)
+  if (!url) throw new Error('图片上传失败')
+  return url
 }
 
 /**

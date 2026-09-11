@@ -95,7 +95,7 @@ export const saveWork = async ({ type, name, blob, meta = {} }) => {
   }
   await idbPut('works', record)
   emit('works')
-  return record
+  return { ...record, url: record.blob ? URL.createObjectURL(record.blob) : '' }
 }
 
 /** 获取作品列表（新的在前），每条附带可用的 objectURL */
