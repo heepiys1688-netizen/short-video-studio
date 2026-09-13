@@ -160,6 +160,7 @@ export default function TextToVideo() {
           engine: result.engine,
           model: result.model,
           ext: result.ext || 'mp4',
+          remoteUrl: result.remoteUrl || '',
         },
       })
       newVideo = {
@@ -171,7 +172,8 @@ export default function TextToVideo() {
         engine: result.engine,
         model: result.model,
         ext: result.ext || 'mp4',
-        videoUrl: work.url,
+        videoUrl: work.url || result.videoUrl || result.remoteUrl || '',
+        remoteUrl: result.remoteUrl || '',
       }
       updateTask(task.id, { status: 'completed', progress: 100, workId: work.id, finishedAt: Date.now() })
     } catch (err) {
@@ -186,7 +188,8 @@ export default function TextToVideo() {
         engine: result.engine,
         model: result.model,
         ext: result.ext || 'mp4',
-        videoUrl: result.videoUrl,
+        videoUrl: result.videoUrl || result.remoteUrl || '',
+        remoteUrl: result.remoteUrl || '',
       }
     }
 

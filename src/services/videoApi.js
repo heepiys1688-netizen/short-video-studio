@@ -67,14 +67,34 @@ const fetchWithRetry = async (url, options = {}, { timeout = 300000, retries = 2
   throw lastErr || new Error('网络请求失败')
 }
 
-/** 下载生成的视频到本地 */
-export const downloadVideo = (videoUrl, filename = 'ai-video', ext = 'mp4') => {
-  const a = document.createElement('a')
-  a.href = videoUrl
-  a.download = `${filename}.${ext}`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+/** 下载生成的视频到本地（支持 blob URL 与远程 URL） */
+export const downloadVideo = async (videoUrl, filename = 'ai-video', ext = 'mp4') => {
+  if (!videoUrl) return
+  const anchor = (href, { download = true } = {}) => {
+    const a = document.createElement('a')
+    a.href = href
+    if (download) a.download = `${filename}.${ext}`
+    else { a.target = '_blank'; a.rel = 'noopener' }
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+  // 本地 blob/data 地址：浏览器按 download 属性直接保存
+  if (videoUrl.startsWith('blob:') || videoUrl.startsWith('data:')) {
+    anchor(videoUrl)
+    return
+  }
+
+  // 远程地址（如智谱 CDN）：先抓取为 blob 触发真正的"下载"命名保存；跨域失败则新标签页打开
+  try {
+    const resp = await fetch(videoUrl, { mode: 'cors' })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await normalizeVideoBlob(await resp.blob())
+    anchor(URL.createObjectURL(blob))
+  } catch {
+    anchor(videoUrl, { download: false })
+  }
 }
 
 /* ============================== 智谱 CogVideoX-Flash 真实 AI（免费） ============================== */
@@ -163,11 +183,29 @@ const pollZhipuVideo = async (id) => {
   throw new Error('生成超时（超过 6 分钟），请稍后重试')
 }
 
-/** 抓取远程视频为 Blob（用于本地保存与预览） */
+/** 将远端返回的 blob 强制规范为可播放的视频 MIME 类型（智谱 CDN 可能返回 application/octet-stream） */
+const normalizeVideoBlob = (raw) => {
+  const t = raw?.type || ''
+  if (raw && (!t || t.includes('octet-stream') || t.includes('binary'))) {
+    try { return raw.slice(0, raw.size, 'video/mp4') } catch { /* 保持原样 */ }
+  }
+  return raw
+}
+
+/** 抓取远程视频为 Blob（用于本地保存与预览），带一次重试 */
 const urlToBlob = async (url) => {
-  const resp = await fetch(url)
-  if (!resp.ok) throw new Error('视频下载失败')
-  return resp.blob()
+  let lastErr
+  for (let i = 0; i < 2; i++) {
+    try {
+      const resp = await fetch(url, { mode: 'cors' })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      return normalizeVideoBlob(await resp.blob())
+    } catch (err) {
+      lastErr = err
+      if (i === 0) await sleep(1500)
+    }
+  }
+  throw lastErr || new Error('视频下载失败')
 }
 
 /** 统一 AI 出片流程：创建 → 轮询 → 抓取 blob */

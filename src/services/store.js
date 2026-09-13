@@ -98,19 +98,19 @@ export const saveWork = async ({ type, name, blob, meta = {} }) => {
   return { ...record, url: record.blob ? URL.createObjectURL(record.blob) : '' }
 }
 
-/** 获取作品列表（新的在前），每条附带可用的 objectURL */
+/** 获取作品列表（新的在前），每条附带可用的 objectURL（无 blob 时回退到远程地址） */
 export const getWorks = async (type) => {
   const all = await idbGetAll('works')
   return all
     .filter((w) => !type || w.type === type)
     .sort((a, b) => b.createdAt - a.createdAt)
-    .map((w) => ({ ...w, url: w.blob ? URL.createObjectURL(w.blob) : '' }))
+    .map((w) => ({ ...w, url: w.blob ? URL.createObjectURL(w.blob) : (w.meta?.remoteUrl || '') }))
 }
 
 export const getWorkById = async (id) => {
   const all = await idbGetAll('works')
   const w = all.find((x) => x.id === id)
-  return w ? { ...w, url: w.blob ? URL.createObjectURL(w.blob) : '' } : null
+  return w ? { ...w, url: w.blob ? URL.createObjectURL(w.blob) : (w.meta?.remoteUrl || '') } : null
 }
 
 export const deleteWork = async (id) => {
